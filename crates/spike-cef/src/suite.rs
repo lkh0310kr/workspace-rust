@@ -867,6 +867,33 @@ fn suite_more(r: &mut Rs, reports: &testsite::Reports) {
     r.add("N1.loading_progress_reaches_1", Some((prog - 1.0).abs() < 1e-6), format!("final on_loading_progress_change={prog}"));
 }
 
+/// 원본 radial-tree(JS)를 가짜 시계로 구동해 시나리오 덤프를 파일로 저장한다.
+/// env: SPIKE_RTE_SCENARIOS=콤마구분 경로들, SPIKE_RTE_OUTDIR=출력 폴더
+fn suite_rte(reports: &testsite::Reports) {
+    let list = std::env::var("SPIKE_RTE_SCENARIOS").unwrap_or_default();
+    let out = std::env::var("SPIKE_RTE_OUTDIR").unwrap_or_else(|_| "target/rte".into());
+    let _ = std::fs::create_dir_all(&out);
+    for path in list.split(',').filter(|p| !p.is_empty()) {
+        let name = std::path::Path::new(path).file_stem().unwrap().to_string_lossy().to_string();
+        let sc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        reports.lock().unwrap().remove("rte_dump");
+        nav(&url("/rte"));
+        pump(300);
+        exec(&format!("window.__run({})", sc["actions"]));
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(120) && report_get(reports, "rte_dump").is_none() {
+            pump(50);
+        }
+        match report_get(reports, "rte_dump") {
+            Some(v) => {
+                let _ = std::fs::write(format!("{out}/{name}-js.json"), v);
+                println!("RTE js dump saved: {name}");
+            }
+            None => println!("RTE js dump TIMEOUT: {name}"),
+        }
+    }
+}
+
 pub fn run(which: &str) {
     let reports = testsite::spawn(18080);
     let _ = cefhost::apply_prefs_off; // 사용 안 함 경고 방지
@@ -890,6 +917,10 @@ pub fn run(which: &str) {
     let _ = crate::ipc_browser::register_factory();
     pump(500);
     let mut rs = Rs(vec![]);
+    if which == "rte" {
+        suite_rte(&reports);
+        return;
+    }
     if which == "hold" {
         nav(&url("/hist/1"));
         println!("HOLD ready");

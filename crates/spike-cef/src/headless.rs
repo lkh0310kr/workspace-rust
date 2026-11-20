@@ -162,8 +162,9 @@ pub fn run(args: &Args, app: &mut cef::App) {
     assert_eq!(ok, 1);
 
     // 가상 뷰: 1100x800 @1x
+    let (vw, vh) = std::env::var("SPIKE_VIEW").ok().and_then(|v| v.split_once('x').map(|(a, b)| (a.parse::<f32>().unwrap_or(1100.0), b.parse::<f32>().unwrap_or(800.0)))).unwrap_or((1100.0, 800.0));
     with(|s| {
-        s.size[0] = (1100.0, 800.0);
+        s.size[0] = (vw, vh);
         s.scale = 1.0;
     });
 

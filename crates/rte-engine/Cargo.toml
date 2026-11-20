@@ -1,0 +1,12 @@
+[package]
+name = "rte-engine"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json = "1"
+
+[[bin]]
+name = "rte-dump"
+path = "src/bin/rte-dump.rs"

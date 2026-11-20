@@ -433,6 +433,15 @@ const a=new Audio(URL.createObjectURL(new Blob([b],{type:'audio/wav'})));a.muted
 __report('audio',o2)};
 __report('web',o)})()</script>"#),
         ),
+        // 원본 radial-tree index.html 에 비교 하니스(prelude)를 주입해서 서빙 (원본 파일은 그대로)
+        ("GET", "/rte") => {
+            let html = std::fs::read_to_string("crates/radial-tree/reference/index.html");
+            let pre = std::fs::read_to_string("crates/rte-engine/tools/js_prelude.js");
+            match (html, pre) {
+                (Ok(h), Ok(p)) => ("200 OK", vec![], h.replacen("<head>", &format!("<head><script>{p}</script>"), 1)),
+                _ => ("404 Not Found", vec![], "reference/prelude missing (run from repo root)".into()),
+            }
+        }
         (_, "/") => (
             "200 OK",
             vec![],
