@@ -11,6 +11,7 @@ gpui(Rust) 앱에 브라우저를 임베딩할 때 두 가지 알려진 문제 �
 
 - **검증 결과 단일 표(결론·TODO 포함, 이것만 보면 됨)**: [docs/VERIFICATION.md](docs/VERIFICATION.md)
 - 웹 ↔ Rust 통신 방식 비교(실측): [docs/ipc-comparison.md](docs/ipc-comparison.md)
+- UI·렌더링 기반 선택 검토(gpui/egui/iced/Bevy): [docs/ui-foundation.md](docs/ui-foundation.md)
 - 보류 항목: [docs/BACKLOG.md](docs/BACKLOG.md)
 - 테스트 사이트(두 스파이크 공용): `crates/testsite`
 - 재현: `scripts/suite-headless.sh all`(창 없음), `scripts/verify.sh --yes`(gpui 창, 포커스 가져감) — 자세한 방법은 VERIFICATION.md. CEF 156 바이너리(`CEF_PATH`, cef-rs `export-cef-dir`로 설치)와 `bundle-cef-app`(cef-rs) 필요.
