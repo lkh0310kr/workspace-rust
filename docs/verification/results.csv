@@ -39,12 +39,15 @@ AUTH-011,AUTH,앱 재시작 후 로그인 상태 유지(주기적 쿠키 flush),
 AUTH-012,AUTH,passkey(Touch ID/Bluetooth) 인증 완료,CEF,156.0.31,UNSUPPORTED,auto-headless,keychain-access-groups 엔타이틀먼트·Bluetooth Info.plist 권한 없이는 불가. 비밀번호 폴백으로 충분(요구사항 아님). BACKLOG,f164c33*,2026-11-20,,
 AUTH-013,AUTH,종료 직전 쿠키 flush 필요(없으면 CEF 영속 쿠키 유실),CEF,151.3.18,INFO,auto-gui,flush 없이 종료 시 psid 유실을 실측 → 주기 flush/종료 시 flush 필수,2b5b01e*,2026-11-20,,
 AUTH-014,AUTH,"Google 외 서드파티 로그인(GitHub/Apple/Microsoft/네이버/카카오), 2단계 인증",CEF,,TODO,plan:manual,,,,P0,
-STORE-001,STORE,"쿠키: JS 가시성 vs 서버 수신(HttpOnly), 세션/영속",CEF,156.0.31,PASS,auto-headless,"document.cookie=""pers=1; sess=2"" server saw=""pers=1; sess=2; hon=3"" (HttpOnly hidden from JS, visible to server)",218b7f5,2026-11-20,,B1a.set_cookie_js_vs_server_view
-STORE-002,STORE,Rust(cookie manager)에서 쿠키 설정 → 서버가 수신,CEF,156.0.31,PASS,auto-headless,"set_cookie->1 server saw=""pers=1; sess=2; hon=3; mgr=fromrust""",218b7f5,2026-11-20,,B1b.set_cookie_from_rust
-STORE-003,STORE,쿠키 개별 삭제,CEF,156.0.31,PASS,auto-headless,"after delete mgr: ""pers=1; sess=2; hon=3""",218b7f5,2026-11-20,,B1c.delete_one_cookie
-STORE-004,STORE,쿠키 전체 삭제,CEF,156.0.31,PASS,auto-headless,"after delete all: """"",218b7f5,2026-11-20,,B1d.delete_all_cookies
-STORE-005,STORE,"프로필/세션 분리(RequestContext 별 캐시 경로, Electron partition 대응), 시크릿(메모리) 모드",CEF,,TODO,plan:headless,,,,P0,
-STORE-006,STORE,"localStorage/IndexedDB 영속, 쿠키 SameSite 정책별 전송",CEF,,TODO,plan:headless,,,,P1,
+STORE-001,STORE,"쿠키: JS 가시성 vs 서버 수신(HttpOnly), 세션/영속",CEF,156.0.31,PASS,auto-headless,"document.cookie=""pers=1; sess=2"" server saw=""pers=1; sess=2; hon=3"" (HttpOnly hidden from JS, visible to server)",3e34a0b,2026-11-20,,B1a.set_cookie_js_vs_server_view
+STORE-002,STORE,Rust(cookie manager)에서 쿠키 설정 → 서버가 수신,CEF,156.0.31,PASS,auto-headless,"set_cookie->1 server saw=""pers=1; sess=2; hon=3; mgr=fromrust""",3e34a0b,2026-11-20,,B1b.set_cookie_from_rust
+STORE-003,STORE,쿠키 개별 삭제,CEF,156.0.31,PASS,auto-headless,"after delete mgr: ""pers=1; sess=2; hon=3""",3e34a0b,2026-11-20,,B1c.delete_one_cookie
+STORE-004,STORE,쿠키 전체 삭제,CEF,156.0.31,PASS,auto-headless,"after delete all: """"",3e34a0b,2026-11-20,,B1d.delete_all_cookies
+STORE-005,STORE,프로필 격리: RequestContext 별 캐시 경로로 쿠키 분리(Electron partition 대응),CEF,156.0.31,PASS,auto-headless,"ctxA sees ""iso=A""; ctxB sees """"; default context sees """"",3e34a0b,2026-11-20,,PR1.profile_isolation
+STORE-006,STORE,디스크 프로필은 컨텍스트를 다시 만들어도 쿠키 유지,CEF,156.0.31,PASS,auto-headless,"recreated ctxA sees ""iso=A""",3e34a0b,2026-11-20,,PR2.disk_profile_persists_across_context_recreate
+STORE-007,STORE,시크릿(메모리 전용) 컨텍스트는 재생성 시 쿠키 없음,CEF,156.0.31,PASS,auto-headless,"in-memory ctx sees ""iso=M"" while alive; recreated in-memory ctx sees """"",3e34a0b,2026-11-20,,PR3.incognito_context_not_persisted
+STORE-008,STORE,localStorage / IndexedDB 읽기·쓰기,CEF,156.0.31,PASS,auto-headless,"localStorage=""v1"" indexedDB=""v2""",3e34a0b,2026-11-20,,W3.localstorage_indexeddb
+STORE-009,STORE,"localStorage/IndexedDB 앱 재시작 후 유지, 쿠키 SameSite 정책별 전송",CEF,,TODO,plan:headless,,,,P1,
 INPUT-001,INPUT,영문 텍스트 입력,wry (WKWebView),macOS 26.6 WebKit,PASS,auto-gui,"value=""abc한""",9389bb2*,2026-11-20,,I1.latin_text
 INPUT-001,INPUT,영문 텍스트 입력,CEF,151.3.18,PASS,auto-gui,"value=""abc한""",2b5b01e*,2026-11-20,,I1.latin_text
 INPUT-002,INPUT,한글 IME 조합 이벤트(NSTextInputClient 호출 모사),wry (WKWebView),macOS 26.6 WebKit,PASS,auto-gui,"responder=..NSKVONotifying_wry::wkwebview::class::wry_web_view::WryWebView0.57.3 value=""abc한"" log=[""input:abc"",""compositionstart:"",""compositionupdate:ㅎ"",""input:ㅎ"",""compositionupdate:하"",""input:하"",""compositionupdate:한"",""input:한"",""input"",""input:한"",""compositionend:한""]",9389bb2*,2026-11-20,,I2.korean_ime_composition
@@ -57,69 +60,82 @@ INPUT-007,INPUT,Cmd+V 붙여넣기,CEF,151.3.18,PASS,auto-gui,"input value after
 INPUT-008,INPUT,gpui 단축키가 웹뷰 포커스 중에도 gpui 로 감,CEF,151.3.18,PASS,auto-gui,gpui action count 0->1; page saw k keydown: false,2b5b01e*,2026-11-20,,I4.gpui_shortcut_while_web_focused
 INPUT-009,INPUT,커서 모양(링크 hand / 입력칸 ibeam),CEF,151.3.18,PASS,auto-gui,"(element, got, want)=[(""hand"", 1, 1), (""ibeam"", 2, 2)] (0=arrow 1=hand 2=ibeam)",2b5b01e*,2026-11-20,,U4.cursor_shape
 INPUT-010,INPUT,드래그 텍스트 선택,CEF,151.3.18,PASS,auto-gui,"selection after drag=""drag select this sentence ple""",2b5b01e*,2026-11-20,,U4.drag_select
-INPUT-011,INPUT,키보드 스크롤(↓/PageDown/End/Home/Space),CEF,156.0.31,PASS,auto-headless,start=0 down×3=120 pagedown=880 end=4200 home=0 space=760,218b7f5,2026-11-20,,K1.keyboard_scroll
-INPUT-012,INPUT,편집 키: 입력/Backspace/Delete/←,CEF,156.0.31,PASS,auto-headless,"typed=""hello world"" backspace=""hello worl"" left×2+delete=""hello wol""",218b7f5,2026-11-20,,K2a.type_backspace_delete
-INPUT-013,INPUT,Shift+Home 선택,CEF,156.0.31,PASS,auto-headless,"selection after Shift+Home=""hello wo""",218b7f5,2026-11-20,,K2b.shift_home_selection
-INPUT-014,INPUT,Cmd+← 줄 처음(OSR 미전달 → Home 으로 매핑),CEF,156.0.31,PASS,auto-headless,"caret after End, Cmd+←=0 (0 expected)",218b7f5,2026-11-20,,K2c.cmd_left_line_start
-INPUT-015,INPUT,Opt+→ 단어 이동,CEF,156.0.31,PASS,auto-headless,caret after Opt+→=5 (5 expected: end of 'hello'),218b7f5,2026-11-20,,K2d.opt_right_word_jump
-INPUT-016,INPUT,전체 선택·실행 취소(frame API),CEF,156.0.31,PASS,auto-headless,"select_all=""hello wol"" after undo=""hello worl""",218b7f5,2026-11-20,,K2e.select_all_and_undo_via_frame_api
-INPUT-017,INPUT,Tab / Shift+Tab 포커스 순서,CEF,156.0.31,PASS,auto-headless,"a→b→c, shift+tab→b (start a)",218b7f5,2026-11-20,,K3a.tab_focus_order
-INPUT-018,INPUT,Enter 로 폼 제출,CEF,156.0.31,PASS,auto-headless,submit events=1,218b7f5,2026-11-20,,K3b.enter_submits_form
-INPUT-019,INPUT,Escape keydown 전달,CEF,156.0.31,PASS,auto-headless,Escape keydown events=1,218b7f5,2026-11-20,,K3c.escape_keydown_delivered
-INPUT-020,INPUT,더블클릭 단어 선택,CEF,156.0.31,PASS,auto-headless,"double-click selection=""beta""",218b7f5,2026-11-20,,M1a.double_click_selects_word
-INPUT-021,INPUT,트리플클릭 문단 선택,CEF,156.0.31,PASS,auto-headless,"triple-click selection=""alpha beta gamma delta""",218b7f5,2026-11-20,,M1b.triple_click_selects_paragraph
-INPUT-022,INPUT,Shift+클릭 범위 선택,CEF,156.0.31,PASS,auto-headless,"selection after click + shift-click=""lpha beta gamma""",218b7f5,2026-11-20,,M1c.shift_click_extends_selection
-INPUT-023,INPUT,줌 레벨 변경 시 레이아웃 반영,CEF,156.0.31,PASS,auto-headless,"level=3.80 innerWidth 1100→550 (ratio 2.00, ≈2 expected)",218b7f5,2026-11-20,,S3.zoom_level_changes_layout
-INPUT-024,INPUT,줌 상태에서 클릭 좌표 정확도(앱이 줌 배율로 변환해야 함),CEF,156.0.31,PASS,auto-headless,"css center=(90,90), factor 2.00: click at css×factor hits=true, at raw css coords hits=false → 앱이 줌 배율로 좌표를 변환해야 함",218b7f5,2026-11-20,,B6.click_accuracy_when_zoomed
-INPUT-025,INPUT,줌 레벨이 같은 오리진에서 유지,CEF,156.0.31,PASS,auto-headless,level after navigating same-origin page=3.80,218b7f5,2026-11-20,,S3b.zoom_persists_per_origin
+INPUT-011,INPUT,키보드 스크롤(↓/PageDown/End/Home/Space),CEF,156.0.31,PASS,auto-headless,start=0 down×3=120 pagedown=880 end=4200 home=0 space=760,3e34a0b,2026-11-20,,K1.keyboard_scroll
+INPUT-012,INPUT,편집 키: 입력/Backspace/Delete/←,CEF,156.0.31,PASS,auto-headless,"typed=""hello world"" backspace=""hello worl"" left×2+delete=""hello wol""",3e34a0b,2026-11-20,,K2a.type_backspace_delete
+INPUT-013,INPUT,Shift+Home 선택,CEF,156.0.31,PASS,auto-headless,"selection after Shift+Home=""hello wo""",3e34a0b,2026-11-20,,K2b.shift_home_selection
+INPUT-014,INPUT,Cmd+← 줄 처음(OSR 미전달 → Home 으로 매핑),CEF,156.0.31,PASS,auto-headless,"caret after End, Cmd+←=0 (0 expected)",3e34a0b,2026-11-20,,K2c.cmd_left_line_start
+INPUT-015,INPUT,Opt+→ 단어 이동,CEF,156.0.31,PASS,auto-headless,caret after Opt+→=5 (5 expected: end of 'hello'),3e34a0b,2026-11-20,,K2d.opt_right_word_jump
+INPUT-016,INPUT,전체 선택·실행 취소(frame API),CEF,156.0.31,PASS,auto-headless,"select_all=""hello wol"" after undo=""hello worl""",3e34a0b,2026-11-20,,K2e.select_all_and_undo_via_frame_api
+INPUT-017,INPUT,Tab / Shift+Tab 포커스 순서,CEF,156.0.31,PASS,auto-headless,"a→b→c, shift+tab→b (start a)",3e34a0b,2026-11-20,,K3a.tab_focus_order
+INPUT-018,INPUT,Enter 로 폼 제출,CEF,156.0.31,PASS,auto-headless,submit events=1,3e34a0b,2026-11-20,,K3b.enter_submits_form
+INPUT-019,INPUT,Escape keydown 전달,CEF,156.0.31,PASS,auto-headless,Escape keydown events=1,3e34a0b,2026-11-20,,K3c.escape_keydown_delivered
+INPUT-020,INPUT,더블클릭 단어 선택,CEF,156.0.31,PASS,auto-headless,"double-click selection=""beta""",3e34a0b,2026-11-20,,M1a.double_click_selects_word
+INPUT-021,INPUT,트리플클릭 문단 선택,CEF,156.0.31,PASS,auto-headless,"triple-click selection=""alpha beta gamma delta""",3e34a0b,2026-11-20,,M1b.triple_click_selects_paragraph
+INPUT-022,INPUT,Shift+클릭 범위 선택,CEF,156.0.31,PASS,auto-headless,"selection after click + shift-click=""lpha beta gamma""",3e34a0b,2026-11-20,,M1c.shift_click_extends_selection
+INPUT-023,INPUT,줌 레벨 변경 시 레이아웃 반영,CEF,156.0.31,PASS,auto-headless,"level=3.80 innerWidth 1100→550 (ratio 2.00, ≈2 expected)",3e34a0b,2026-11-20,,S3.zoom_level_changes_layout
+INPUT-024,INPUT,줌 상태에서 클릭 좌표 정확도(앱이 줌 배율로 변환해야 함),CEF,156.0.31,PASS,auto-headless,"css center=(90,90), factor 2.00: click at css×factor hits=true, at raw css coords hits=false → 앱이 줌 배율로 좌표를 변환해야 함",3e34a0b,2026-11-20,,B6.click_accuracy_when_zoomed
+INPUT-025,INPUT,줌 레벨이 같은 오리진에서 유지,CEF,156.0.31,PASS,auto-headless,level after navigating same-origin page=3.80,3e34a0b,2026-11-20,,S3b.zoom_persists_per_origin
 INPUT-026,INPUT,"키 입력 인코딩 규칙(RAWKEYDOWN 단독은 2회 동작 → 기능 문자 필요, Cmd+방향키 미전달)",CEF,156.0.31,INFO,auto-headless,"실험(keyexp): RAWKEYDOWN 단독=편집키 2회 동작, +macOS 기능 문자=1회, Space는 +CHAR 필요, Cmd+←/→ 는 어떤 인코딩도 무효 → keys.rs 에 규칙·매핑 반영",218b7f5,2026-11-20,,
 INPUT-027,INPUT,"실제 한글 키보드 입력(자모 조합·영한 전환·후보창 위치), 일본어/중국어 IME",CEF,,TODO,plan:manual,,,,P0,
 INPUT-028,INPUT,"핀치 줌(트랙패드 magnify → ctrl+wheel 또는 zoom level), 한계값, 중심점",CEF,,TODO,plan:gui,,,,P0,
 INPUT-029,INPUT,"키보드 줌(Cmd +/−/0), 도메인별 기억 연동",CEF,,TODO,plan:headless,,,,P0,
 INPUT-030,INPUT,"휠 스크롤 정확도(픽셀/라인, 관성, 가로, 중첩 스크롤), 부드러운 스크롤",CEF,,TODO,plan:gui,,,,P0,
-INPUT-031,INPUT,키 반복·수식키 조합·keydown/up 순서,CEF,,TODO,plan:headless,,,,P1,
-INPUT-032,INPUT,"호버/mouseleave, 패널 밖으로 나갈 때 leave 이벤트",CEF,,TODO,plan:headless,,,,P1,
-INPUT-033,INPUT,"중간 버튼/Cmd+클릭(새 탭), 마우스 뒤로/앞으로 버튼",CEF,,TODO,plan:gui,,,,P1,
-INPUT-034,INPUT,"드래그&드롭(페이지 내, 링크/이미지, 외부 파일 드롭)",CEF,,TODO,plan:gui,,,,P1,
-INPUT-035,INPUT,"웹뷰↔gpui 입력칸 간 포커스 이동, 창 비활성/활성 시 캐럿·:focus",CEF,,TODO,plan:gui,,,,P0,
-INPUT-036,INPUT,preventDefault 한 wheel/키가 gpui 단축키와 충돌하지 않음,CEF,,TODO,plan:gui,,,,P1,
-INPUT-037,INPUT,"이모지/특수문자 입력, 서식 붙여넣기",CEF,,TODO,plan:manual,,,,P2,
-NAV-001,NAV,뒤로/앞으로 이동,CEF,156.0.31,PASS,auto-headless,back→http://127.0.0.1:18080/hist/2 back→http://127.0.0.1:18080/hist/1 fwd×2→http://127.0.0.1:18080/hist/3,218b7f5,2026-11-20,,B2a.back_forward_navigation
-NAV-002,NAV,can_go_back / can_go_forward 상태 콜백,CEF,156.0.31,PASS,auto-headless,at /hist/3 back=true fwd=false; at /hist/1 back=true (이전 항목 존재) fwd=true,218b7f5,2026-11-20,,B2b.can_go_back_forward_state
-NAV-003,NAV,새로고침,CEF,156.0.31,PASS,auto-headless,loading events 46→48,218b7f5,2026-11-20,,B2c.reload
-NAV-004,NAV,SPA pushState 주소 변경 + 뒤로,CEF,156.0.31,PASS,auto-headless,"pushState→http://127.0.0.1:18080/spa/x (title ""spa-x"") back→http://127.0.0.1:18080/spa",218b7f5,2026-11-20,,B2d.spa_pushstate_and_back
-NAV-005,NAV,제목·주소·파비콘 이벤트,CEF,156.0.31,PASS,auto-headless,"title=""My Titled Page"" address=http://127.0.0.1:18080/titled favicon events=1",218b7f5,2026-11-20,,B12a.title_address_favicon
-NAV-006,NAV,로드 실패(연결 거부) 오류 콜백,CEF,156.0.31,PASS,auto-headless,"load errors=[""Errorcode(ERR_CONNECTION_REFUSED) ERR_CONNECTION_REFUSED http://127.0.0.1:54329/""]",218b7f5,2026-11-20,,B12b.load_error_reported
-NAV-007,NAV,"페이지 내 찾기(개수, 다음, 대소문자 구분)",CEF,156.0.31,PASS,auto-headless,case-insensitive count=6 initial active ordinal=0 (CEF 는 첫 검색에서 0); find-next → 1; case-sensitive count=4 (6 / +1 / 4 expected),218b7f5,2026-11-20,,B5.find_in_page
-NAV-008,NAV,사용자 제스처 없는 window.open 은 Chromium 이 기본 차단,CEF,156.0.31,PASS,auto-headless,popup opened=false on_before_popup calls=0 (Chromium 이 기본 차단하므로 핸들러까지 오지 않음),218b7f5,2026-11-20,,B4a.popup_without_gesture_blocked_by_default
-NAV-009,NAV,window.open(제스처) features(크기)·opener 유지,CEF,156.0.31,PASS,auto-headless,"log=[""popup url=http://127.0.0.1:18080/popchild gesture=1 features=400x300""] child saw=Some(""OPENER"")",218b7f5,2026-11-20,,B4b.window_open_with_gesture_features_opener
-NAV-010,NAV,noopener 팝업은 opener 없음,CEF,156.0.31,PASS,auto-headless,"child saw=Some(""NO_OPENER"")",218b7f5,2026-11-20,,B4c.noopener_popup_has_no_opener
-NAV-011,NAV,팝업 허용/차단 정책 훅(on_before_popup),CEF,156.0.31,INFO,auto-headless,"on_before_popup 에서 user_gesture/features/URL 로 허용·차단을 결정할 수 있음(차단 시 1 반환) — 코드 경로 존재, 제스처 있는 차단 시나리오는 미검증",218b7f5,2026-11-20,,B4d.popup_policy_hook_exists
-NAV-012,NAV,"탭: 다중 브라우저 생성·전환·닫기, 백그라운드 탭 렌더 중지(was_hidden), 탭별 크기/포커스",CEF,,TODO,plan:headless,,,,P0,
-NAV-013,NAV,"탭 닫기 시 메모리 해제, 탭 복원",CEF,,TODO,plan:headless,,,,P1,
-NAV-014,NAV,외부 프로토콜(mailto:/tel:) → OS 열기 정책,CEF,,TODO,plan:headless,,,,P2,
-NAV-015,NAV,로딩 진행률(on_loading_progress_change),CEF,,TODO,plan:headless,,,,P1,
+INPUT-031,INPUT,키 반복 시 e.repeat 플래그(IS_REPEAT 수식키 전달),CEF,156.0.31,FAIL,auto-headless,"keydown sequence (d=first, R=e.repeat) = [""d"",""d"",""d""]",3e34a0b,2026-11-20,,H2.key_repeat_flag
+INPUT-032,INPUT,수식키 조합·keydown/up 순서 정확성,CEF,,TODO,plan:headless,,,,P1,
+INPUT-033,INPUT,"호버 enter/leave, 패널 밖으로 나갈 때 mouseleave",CEF,156.0.31,PASS,auto-headless,"after enter={""enter"":1,""leave"":0,""docleave"":0} after move-out={""enter"":1,""leave"":1,""docleave"":0} after panel-leave={""enter"":2,""leave"":2,""docleave"":1}",3e34a0b,2026-11-20,,H1.hover_enter_leave_and_panel_exit
+INPUT-034,INPUT,"중간 버튼/Cmd+클릭(새 탭), 마우스 뒤로/앞으로 버튼",CEF,,TODO,plan:gui,,,,P1,
+INPUT-035,INPUT,"드래그&드롭(페이지 내, 링크/이미지, 외부 파일 드롭)",CEF,,TODO,plan:gui,,,,P1,
+INPUT-036,INPUT,"웹뷰↔gpui 입력칸 간 포커스 이동, 창 비활성/활성 시 캐럿·:focus",CEF,,TODO,plan:gui,,,,P0,
+INPUT-037,INPUT,preventDefault 한 wheel/키가 gpui 단축키와 충돌하지 않음,CEF,,TODO,plan:gui,,,,P1,
+INPUT-038,INPUT,"이모지/특수문자 입력, 서식 붙여넣기",CEF,,TODO,plan:manual,,,,P2,
+NAV-001,NAV,뒤로/앞으로 이동,CEF,156.0.31,PASS,auto-headless,back→http://127.0.0.1:18080/hist/2 back→http://127.0.0.1:18080/hist/1 fwd×2→http://127.0.0.1:18080/hist/3,3e34a0b,2026-11-20,,B2a.back_forward_navigation
+NAV-002,NAV,can_go_back / can_go_forward 상태 콜백,CEF,156.0.31,PASS,auto-headless,at /hist/3 back=true fwd=false; at /hist/1 back=true (이전 항목 존재) fwd=true,3e34a0b,2026-11-20,,B2b.can_go_back_forward_state
+NAV-003,NAV,새로고침,CEF,156.0.31,PASS,auto-headless,loading events 44→46,3e34a0b,2026-11-20,,B2c.reload
+NAV-004,NAV,SPA pushState 주소 변경 + 뒤로,CEF,156.0.31,PASS,auto-headless,"pushState→http://127.0.0.1:18080/spa/x (title ""spa-x"") back→http://127.0.0.1:18080/spa",3e34a0b,2026-11-20,,B2d.spa_pushstate_and_back
+NAV-005,NAV,제목·주소·파비콘 이벤트,CEF,156.0.31,PASS,auto-headless,"title=""My Titled Page"" address=http://127.0.0.1:18080/titled favicon events=1",3e34a0b,2026-11-20,,B12a.title_address_favicon
+NAV-006,NAV,로드 실패(연결 거부) 오류 콜백,CEF,156.0.31,PASS,auto-headless,"load errors=[""Errorcode(ERR_CONNECTION_REFUSED) ERR_CONNECTION_REFUSED http://127.0.0.1:54329/""]",3e34a0b,2026-11-20,,B12b.load_error_reported
+NAV-007,NAV,"페이지 내 찾기(개수, 다음, 대소문자 구분)",CEF,156.0.31,PASS,auto-headless,case-insensitive count=6 initial active ordinal=0 (CEF 는 첫 검색에서 0); find-next → 1; case-sensitive count=4 (6 / +1 / 4 expected),3e34a0b,2026-11-20,,B5.find_in_page
+NAV-008,NAV,사용자 제스처 없는 window.open 은 Chromium 이 기본 차단,CEF,156.0.31,PASS,auto-headless,popup opened=false on_before_popup calls=0 (Chromium 이 기본 차단하므로 핸들러까지 오지 않음),3e34a0b,2026-11-20,,B4a.popup_without_gesture_blocked_by_default
+NAV-009,NAV,window.open(제스처) features(크기)·opener 유지,CEF,156.0.31,PASS,auto-headless,"log=[""popup url=http://127.0.0.1:18080/popchild gesture=1 features=400x300""] child saw=Some(""OPENER"")",3e34a0b,2026-11-20,,B4b.window_open_with_gesture_features_opener
+NAV-010,NAV,noopener 팝업은 opener 없음,CEF,156.0.31,PASS,auto-headless,"child saw=Some(""NO_OPENER"")",3e34a0b,2026-11-20,,B4c.noopener_popup_has_no_opener
+NAV-011,NAV,팝업 허용/차단 정책 훅(on_before_popup),CEF,156.0.31,INFO,auto-headless,"on_before_popup 에서 user_gesture/features/URL 로 허용·차단을 결정할 수 있음(차단 시 1 반환) — 코드 경로 존재, 제스처 있는 차단 시나리오는 미검증",3e34a0b,2026-11-20,,B4d.popup_policy_hook_exists
+NAV-012,NAV,"탭: 다중 브라우저 동시 생성, 탭별 독립 페이지",CEF,156.0.31,PASS,auto-headless,"tabs=3 reported urls=[""http://127.0.0.1:18080/tabpage?name=t1"", ""http://127.0.0.1:18080/tabpage?name=t2"", ""http://127.0.0.1:18080/tabpage?name=t3""]",3e34a0b,2026-11-20,,T1.tabs_create_distinct
+NAV-013,NAV,"숨긴 탭은 렌더 중지(was_hidden), 다시 보이면 재개",CEF,156.0.31,PASS,auto-headless,"2s paint counts — all visible=[60, 60, 60]; tab0 visible & tab1,2 hidden=[61, 0, 0]; after show=[60, 60, 60]",3e34a0b,2026-11-20,,T2.hidden_tabs_stop_rendering
+NAV-014,NAV,"탭 닫기 정리(모든 탭 해제, 닫힘 이벤트)",CEF,156.0.31,PASS,auto-headless,tabs left=0 closed events=10,3e34a0b,2026-11-20,,T3.tabs_close_cleanup
+NAV-015,NAV,"탭 복원(세션 복원), 탭별 크기/포커스 전환",CEF,,TODO,plan:headless,,,,P1,
+NAV-016,NAV,외부 프로토콜(mailto:/tel:) → OS 열기 정책,CEF,,TODO,plan:headless,,,,P2,
+NAV-017,NAV,로딩 진행률(on_loading_progress_change)이 1.0 에 도달,CEF,156.0.31,PASS,auto-headless,final on_loading_progress_change=1,3e34a0b,2026-11-20,,N1.loading_progress_reaches_1
 UI-001,UI,우클릭 컨텍스트 메뉴를 gpui 가 그림(기본 메뉴 제거),CEF,151.3.18,PASS,auto-gui,"ctx=Some((120, 60, """"))",2b5b01e*,2026-11-20,,U4.context_menu_requested
 UI-002,UI,gpui 메뉴 항목('Select all') 동작·메뉴 닫힘,CEF,151.3.18,PASS,auto-gui,"selection after gpui menu 'Select all'=""select me with context menu"" menu_closed=true",2b5b01e*,2026-11-20,,U4.context_menu_action
-UI-003,UI,JS alert/confirm/prompt 처리,CEF,156.0.31,PASS,auto-headless,"page result={""a"":""ok"",""c"":true,""p"":""spike-input""} handler log=[""JsdialogType(JSDIALOGTYPE_ALERT):A"", ""JsdialogType(JSDIALOGTYPE_CONFIRM):C"", ""JsdialogType(JSDIALOGTYPE_PROMPT):P""]",218b7f5,2026-11-20,,B10a.alert_confirm_prompt
-UI-004,UI,beforeunload 다이얼로그,CEF,156.0.31,PASS,auto-headless,"handler log after navigating away=[""beforeunload:Is it OK to leave/reload this page?""]",218b7f5,2026-11-20,,B10b.beforeunload_dialog
+UI-003,UI,JS alert/confirm/prompt 처리,CEF,156.0.31,PASS,auto-headless,"page result={""a"":""ok"",""c"":true,""p"":""spike-input""} handler log=[""JsdialogType(JSDIALOGTYPE_ALERT):A"", ""JsdialogType(JSDIALOGTYPE_CONFIRM):C"", ""JsdialogType(JSDIALOGTYPE_PROMPT):P""]",3e34a0b,2026-11-20,,B10a.alert_confirm_prompt
+UI-004,UI,beforeunload 다이얼로그,CEF,156.0.31,PASS,auto-headless,"handler log after navigating away=[""beforeunload:Is it OK to leave/reload this page?""]",3e34a0b,2026-11-20,,B10b.beforeunload_dialog
 UI-005,UI,"다운로드(경로 지정, 완료 콜백, 내용 일치)",CEF,151.3.18,PASS,auto-gui,"file content=""hello download"" log=[""start spike.txt"", ""complete 14 bytes""]",2b5b01e*,2026-11-20,,U6.download
 UI-006,UI,파일 선택 <input type=file>(테스트 고정 경로),CEF,151.3.18,PASS,auto-gui,"clicked=true report={""name"":""upload-sample.txt"",""size"":10}",2b5b01e*,2026-11-20,,U6.file_chooser
-UI-007,UI,"원격 디버깅 엔드포인트(/json/version, /json/list, WS URL)",CEF,156.0.31,PASS,auto-headless,"version ok=true list has page target=true (port 9222); version head=""HTTP/1.1 200 OK\r\nContent-Security-Policy:frame-ancestors 'none'\r\nContent-Length:451\r\nContent-Type:application/json; charset=UTF-8\r\n\r\n{\n   \""Browser\"": \""Chrome/156""",218b7f5,2026-11-20,,B7a.remote_debugging_endpoints
-UI-008,UI,DevTools UI: gpui 패널(두 번째 windowless 브라우저)에 렌더. 참고: 응답의 frontend URL 은 외부 호스팅(chrome-devtools-frontend.appspot.com),CEF,,TODO,plan:headless,,,,P0,
-UI-009,UI,컨텍스트 메뉴 완성(링크/이미지/선택 텍스트/입력칸/페이지 항목별 동작),CEF,,TODO,plan:gui,,,,P1,
-UI-010,UI,"이미지 저장/복사, download_image, 진행률·취소·재시도",CEF,,TODO,plan:headless,,,,P1,
-UI-011,UI,권한 프롬프트(카메라/마이크/위치/알림/클립보드/화면 공유),CEF,,TODO,plan:gui,,,,P1,
-UI-012,UI,"HTTP 인증 프롬프트, 인증서 오류 경고/예외, 혼합 콘텐츠",CEF,,TODO,plan:headless,,,,P1,
-UI-013,UI,"클립보드 API(navigator.clipboard), 이미지 붙여넣기",CEF,,TODO,plan:headless,,,,P1,
-UI-014,UI,"전체화면 API(비디오/페이지), Esc 해제와 gpui 레이아웃 연동",CEF,,TODO,plan:gui,,,,P1,
-UI-015,UI,네이티브 파일 열기/저장 대화상자 연동(현재는 테스트용 고정 경로),CEF,,TODO,plan:gui,,,,P1,
-UI-016,UI,"인쇄/PDF 저장, 내장 PDF 뷰어",CEF,,TODO,plan:headless,,,,P2,
-UI-017,UI,접근성(스크린 리더)·키보드만으로 조작,CEF,,TODO,plan:manual,,,,P2,
-WEB-001,WEB,"미디어: <video>/<audio> 재생, 자동재생 정책, 코덱(H.264/AAC 지원 여부), 음소거, PiP",CEF,,TODO,plan:headless,,,,P0,
-WEB-002,WEB,"WebSocket, Service Worker, WebGL/WebGPU, WebRTC, 웹폰트",CEF,,TODO,plan:headless,,,,P1,
-WEB-003,WEB,"한글/이모지 폰트 폴백, 텍스트 렌더링 품질",CEF,,TODO,plan:gui,,,,P1,
-WEB-004,WEB,"User-Agent/언어/프록시 설정, 다운로드 폴더 정책",CEF,,TODO,plan:headless,,,,P2,
+UI-007,UI,"원격 디버깅 엔드포인트(/json/version, /json/list, WS URL)",CEF,156.0.31,PASS,auto-headless,"version ok=true list has page target=true (port 9222); version head=""HTTP/1.1 200 OK\r\nContent-Security-Policy:frame-ancestors 'none'\r\nContent-Length:451\r\nContent-Type:application/json; charset=UTF-8\r\n\r\n{\n   \""Browser\"": \""Chrome/156""",3e34a0b,2026-11-20,,B7a.remote_debugging_endpoints
+UI-008,UI,DevTools 프론트엔드가 CEF 번들에서 로컬로 제공됨(/devtools/inspector.html 200),CEF,156.0.31,PASS,auto-headless,"GET /devtools/inspector.html → ""HTTP/1.1 200 OK"" (404 면 최소 CEF 번들에 DevTools UI 리소스가 없음)",3e34a0b,2026-11-20,,D1.devtools_frontend_assets_served_locally
+UI-009,UI,DevTools 를 두 번째 windowless 브라우저로 로드·렌더(gpui 패널 후보). 참고: /json/list 의 frontend URL 은 외부 호스팅,CEF,156.0.31,PASS,auto-headless,"frontend status=""HTTP/1.1 200 OK"" tab paints=9 load errors=[]",3e34a0b,2026-11-20,,D2.devtools_in_second_windowless_browser
+UI-010,UI,컨텍스트 메뉴 완성(링크/이미지/선택 텍스트/입력칸/페이지 항목별 동작),CEF,,TODO,plan:gui,,,,P1,
+UI-011,UI,"이미지 저장/복사, download_image, 진행률·취소·재시도",CEF,,TODO,plan:headless,,,,P1,
+UI-012,UI,권한 프롬프트(카메라/마이크/위치/알림/화면 공유),CEF,,TODO,plan:gui,,,,P1,
+UI-013,UI,HTTP 인증 콜백이 호출되지 않는 원인 조사(401 → ERR_INVALID_AUTH_CREDENTIALS),CEF,,TODO,plan:headless,,,,P1,
+UI-014,UI,HTTP Basic 인증: RequestHandler.auth_credentials 로 자격 증명 제공,CEF,156.0.31,FAIL,auto-headless,"auth requests without credentials=0; with credentials server saw """" (dTpw = base64 'u:p'); requests=[]; page text without credentials="""" load errors=[""Errorcode(ERR_INVALID_AUTH_CREDENTIALS) ERR_INVALID_AUTH_CREDENTIALS http://127.0.0.1:18080/auth""]",3e34a0b,2026-11-20,,A1.http_basic_auth_prompt_handled
+UI-015,UI,HTTP 인증: URL 자격 증명(http://u:p@host/),CEF,156.0.31,FAIL,auto-headless,"http://u:p@host/ → server saw Authorization """"",3e34a0b,2026-11-20,,A2.http_auth_via_url_credentials
+UI-016,UI,"인증서 오류 경고/예외, 혼합 콘텐츠",CEF,,TODO,plan:headless,,,,P1,
+UI-017,UI,navigator.clipboard.writeText → 시스템 클립보드,CEF,156.0.31,PASS,auto-headless,"navigator.clipboard.writeText → ""OK""; system clipboard=""spike-clip-ok"" (사용자 클립보드는 복원함)",3e34a0b,2026-11-20,,C1.clipboard_write_api
+UI-018,UI,"navigator.clipboard.readText/이미지 붙여넣기, 권한 처리",CEF,,TODO,plan:headless,,,,P1,
+UI-019,UI,"전체화면 API(비디오/페이지), Esc 해제와 gpui 레이아웃 연동",CEF,,TODO,plan:gui,,,,P1,
+UI-020,UI,네이티브 파일 열기/저장 대화상자 연동(현재는 테스트용 고정 경로),CEF,,TODO,plan:gui,,,,P1,
+UI-021,UI,"인쇄/PDF 저장, 내장 PDF 뷰어",CEF,,TODO,plan:headless,,,,P2,
+UI-022,UI,접근성(스크린 리더)·키보드만으로 조작,CEF,,TODO,plan:manual,,,,P2,
+WEB-001,WEB,코덱 지원 여부(canPlayType: H.264/AAC/VP9/AV1/MP3/Opus),CEF,156.0.31,INFO,auto-headless,"canPlayType {""h264"":""no"",""vp9"":""probably"",""av1"":""probably"",""aac"":""no"",""mp3"":""probably"",""opus"":""probably""}",3e34a0b,2026-11-20,,W1.codec_support
+WEB-002,WEB,"오디오 재생 파이프라인(자동재생 정책: 제스처 전 거절, 클릭 후 재생)",CEF,156.0.31,PASS,auto-headless,"muted <audio> without user gesture → {""play"":""rejected NotAllowedError"",""paused"":true,""readyState"":4,""audio_time"":0,""err"":null}; after user click → {""play"":""resolved"",""paused"":false,""readyState"":4,""audio_time"":0.33609,""err"":null} (play: resolved|rejected|pending)",3e34a0b,2026-11-20,,W6.audio_playback_pipeline
+WEB-003,WEB,"비디오 재생, PiP, 전체 화면 비디오",CEF,,TODO,plan:gui,,,,P0,
+WEB-004,WEB,WebGL2 / WebGPU 사용 가능,CEF,156.0.31,PASS,auto-headless,"webgl2=true renderer=""WebKit WebGL"" navigator.gpu=""object""",3e34a0b,2026-11-20,,W2.webgl2_webgpu
+WEB-005,WEB,Service Worker 등록·활성화,CEF,156.0.31,PASS,auto-headless,"service worker=""active""",3e34a0b,2026-11-20,,W4.service_worker
+WEB-006,WEB,WebRTC RTCPeerConnection.createOffer,CEF,156.0.31,PASS,auto-headless,"RTCPeerConnection.createOffer=""offer""",3e34a0b,2026-11-20,,W5.webrtc_offer
+WEB-007,WEB,"WebSocket 연결, 웹폰트 로딩",CEF,,TODO,plan:headless,,,,P1,
+WEB-008,WEB,"한글/이모지 폰트 폴백, 텍스트 렌더링 품질",CEF,,TODO,plan:gui,,,,P1,
+WEB-009,WEB,"User-Agent/언어/프록시 설정, 다운로드 폴더 정책",CEF,,TODO,plan:headless,,,,P2,
 IPC-001,IPC,프로세스 메시지 브리지(window.workspace.invoke) 왕복 지연,CEF,156.0.31,INFO,auto-headless,"64B 평균 0.79ms, 1MB 평균 7.0ms(p99 39.8ms). debug 빌드, 순차 요청",191dd55*,2026-11-20,,
 IPC-002,IPC,커스텀 스킴(workspace://) 핸들러 왕복 지연,CEF,156.0.31,INFO,auto-headless,"64B 평균 0.21ms, 1MB 평균 1.55ms",191dd55*,2026-11-20,,
 IPC-003,IPC,로컬 HTTP 왕복 지연,CEF,156.0.31,INFO,auto-headless,"64B 평균 0.71ms, 1MB 평균 1.55ms",191dd55*,2026-11-20,,
@@ -131,14 +147,16 @@ IPC-008,IPC,브라우저 프로세스 쪽 프레임/오리진 검증 및 우회 
 PERF-001,PERF,애니메이션 프레임레이트(rAF),CEF,151.3.18,INFO,auto-gui,"page rAF={""raf"":182,""ms"":3011}; CEF on_paint=181 in 3.0s (60.2/s); gpui paints=181 (60.2/s)",2b5b01e*,2026-11-20,,P1.animation_fps
 PERF-002,PERF,리사이즈 지연(토글 → 올바른 크기 프레임 도착),CEF,151.3.18,PASS,auto-gui,"toggle→correctly-sized frame: avg=32ms max=67ms samples=[22.036584, 23.698666, 55.897458, 16.855666, 16.730999999999998, 66.711958, 16.449917000000003, 16.896125, 66.552209, 17.185916] (측정 실패=-1)",2b5b01e*,2026-11-20,,P1.resize_latency
 PERF-003,PERF,프레임 파이프라인 비용(CPU 복사 + RenderImage),CEF,151.3.18,INFO,auto-gui,on_paint callbacks=292 avg copy=1.00ms; gpui paint closures=335 avg RenderImage+paint_image build=2.22ms (GPU upload excluded),2b5b01e*,2026-11-20,,P2.frame_pipeline_cost
-PERF-004,PERF,"탭 다수(10~30개) 메모리/CPU, 숨긴 탭 프레임 전달 중지",CEF,,TODO,plan:headless,,,,P0,
-PERF-005,PERF,"프레임 전달: CPU 복사 vs IOSurface 공유 텍스처, 4K/고주사율",CEF,,TODO,plan:gui,,,,P1,
-PERF-006,PERF,영상 재생·고해상도 스크롤 프레임 안정성,CEF,,TODO,plan:gui,,,,P1,
+PERF-004,PERF,"탭 10개 메모리(프로세스 트리 RSS), 닫은 뒤 회수",CEF,156.0.31,INFO,auto-headless,"process-tree RSS: 1 tab 516MB → 10 tabs 1402MB (+886MB, 탭당 약 98MB) → 닫은 뒤 432MB",3e34a0b,2026-11-20,,T4.tabs_memory
+PERF-005,PERF,"탭 30개 이상, CPU 사용률, 숨긴 탭 CPU",CEF,,TODO,plan:headless,,,,P1,
+PERF-006,PERF,"프레임 전달: CPU 복사 vs IOSurface 공유 텍스처, 4K/고주사율",CEF,,TODO,plan:gui,,,,P1,
+PERF-007,PERF,영상 재생·고해상도 스크롤 프레임 안정성,CEF,,TODO,plan:gui,,,,P1,
 STAB-001,STAB,종료 후 헬퍼 프로세스가 남지 않음,CEF,156.0.31,PASS,auto-headless,스위트 종료 2초 뒤 spike-cef 프로세스 0개,218b7f5,2026-11-20,,
-STAB-002,STAB,"렌더러 크래시 복구(on_render_process_terminated → 다시 로드), 행 처리",CEF,,TODO,plan:headless,,,,P0,
-STAB-003,STAB,"장시간 구동 메모리 누수, 프레임 버퍼 해제",CEF,,TODO,plan:headless,,,,P1,
-STAB-004,STAB,"악성/대용량 페이지(무한 루프, 거대 이미지)에서 UI 응답성",CEF,,TODO,plan:headless,,,,P1,
-STAB-005,STAB,번들 덮어쓰기 시 코드서명 캐시 불일치(SIGKILL Code Signature Invalid) 주의,CEF,156.0.31,INFO,auto-headless,번들 삭제 후 재생성 + ad-hoc 재서명으로 해결(스크립트 반영),beace55,2026-11-20,,
+STAB-002,STAB,렌더러 크래시 복구(on_render_process_terminated → 다시 이동하면 정상),CEF,156.0.31,PASS,auto-headless,"crash via chrome://crash: on_render_process_terminated x1; after navigating again title=""hist 2""; log=[""render_process_terminated TerminationStatus(TS_PROCESS_CRASHED) code=11 11""]",3e34a0b,2026-11-20,,ST1.renderer_crash_recovery
+STAB-003,STAB,렌더러 응답 없음(행) 처리,CEF,,TODO,plan:headless,,,,P1,
+STAB-004,STAB,"장시간 구동 메모리 누수, 프레임 버퍼 해제",CEF,,TODO,plan:headless,,,,P1,
+STAB-005,STAB,"악성/대용량 페이지(무한 루프, 거대 이미지)에서 UI 응답성",CEF,,TODO,plan:headless,,,,P1,
+STAB-006,STAB,번들 덮어쓰기 시 코드서명 캐시 불일치(SIGKILL Code Signature Invalid) 주의,CEF,156.0.31,INFO,auto-headless,번들 삭제 후 재생성 + ad-hoc 재서명으로 해결(스크립트 반영),beace55,2026-11-20,,
 SEC-001,SEC,IPC 브리지 오리진 통제(비신뢰 오리진/iframe 호출 불가),CEF,,TODO,plan:headless,,,,P0,
 SEC-002,SEC,스킴 핸들러·로컬 서버 오리진/토큰 검사,CEF,,TODO,plan:headless,,,,P0,
 PKG-001,PKG,번들 크기,CEF,151.3.18,INFO,auto-gui,370MB(CEF 프레임워크 343MB),2b5b01e*,2026-11-20,,

@@ -14,6 +14,9 @@
 - [ ] 현재는 passkey 불가 → "Try another way"로 비밀번호 로그인(사용자 확인 완료).
 - [ ] macOS 키체인(저장된 비밀번호/자동완성) 연동 여부 결정(`use-mock-keychain` 제거 시 키체인 접근 프롬프트).
 
+## 미디어
+- [ ] **H.264/AAC 재생**: CEF 기본 빌드는 상용 코덱 미포함(`canPlayType` no). 필요하면 `proprietary_codecs=true ffmpeg_branding=Chrome` 로 CEF를 직접 빌드(수 시간·수십 GB)하거나 코덱 포함 배포본을 사용. 라이선스 검토 필요.
+
 ## 플랫폼
 - [ ] **Windows/Linux 지원 여부 결정**: 현재 macOS arm64만 검증. OSR 가속 경로(IOSurface/DXGI/dmabuf), IME, 번들 구조가 플랫폼별로 다름.
 - [ ] Intel Mac(x86_64) 빌드.
