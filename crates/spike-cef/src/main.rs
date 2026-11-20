@@ -100,6 +100,7 @@ impl Root {
     fn mouse_button(&mut self, ev_pos: gpui::Point<Pixels>, m: &gpui::Modifiers, click_count: usize, up: bool, right: bool) {
         let Some((w, x, y)) = self.route(ev_pos) else { return };
         if let Some(h) = host(w) {
+            if right { with(|s| s.right_clicks += 1); }
             let e = MouseEvent { x, y, modifiers: mods(m, !up && !right) };
             if !up {
                 h.set_focus(1);
@@ -267,6 +268,7 @@ impl Render for Root {
                                     .on_mouse_move(cx.listener(|t, e: &MouseMoveEvent, _, _| {
                                         if let Some((w, x, y)) = t.route(e.position) {
                                             if let Some(h) = host(w) {
+                                                with(|s| { s.moves += 1; s.last_move = (x, y, mods(&e.modifiers, e.pressed_button.is_some())); });
                                                 h.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers: mods(&e.modifiers, e.pressed_button.is_some()) }), 0);
                                             }
                                         }
@@ -357,6 +359,7 @@ impl Render for Root {
                                                         });
                                                         if let Some(h) = host(Which::Main) {
                                                             h.was_resized();
+                                                            h.invalidate(PaintElementType::default());
                                                         }
                                                     }
                                                     bounds

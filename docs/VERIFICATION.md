@@ -97,17 +97,18 @@ Z1/Z2는 오버레이가 실제로 그려졌는지 대조군(사이드바 쪽 �
 | U3 | `<select>` popup widget | ✅ | `OnPopupShow/Size` + `PET_POPUP` 별도 레이어로 그리면 렌더/선택 모두 동작 |
 | U3b | 배경 미지정 페이지 | ✅(수정 후) | **OSR 기본 배경은 투명** → gpui 뒷면이 비침. `BrowserSettings.background_color=0xFFFFFFFF` 필수 |
 
-구현 완료, **아직 실행하지 않음**(창을 띄워야 해서 사용자 작업 시간 확인 후 실행 예정):
-
-| ID | 항목 | 구현 | 판정 기준(하니스에 작성됨) |
+| ID | 항목 | 결과 | 비고 |
 |---|---|---|---|
-| U4 | 커서 모양 | `on_cursor_change` → gpui `.cursor()` | 링크 위 hand, input 위 ibeam |
-| U4 | 우클릭 메뉴 | `ContextMenuHandler`로 기본 메뉴 제거, gpui가 메뉴를 그림(오버레이이므로 z-order 이점 확인 대상) | 우클릭 시 요청 수신, "Select all" 클릭 시 선택됨/메뉴 닫힘 |
-| U4 | 드래그 선택 | 마우스 이동에 눌림 상태 전달 | 드래그 후 `getSelection()` 비어있지 않음 |
-| U6 | 다운로드 | `DownloadHandler` → `target/downloads/` | 파일 내용 일치 |
-| U6 | 파일 선택 | `DialogHandler`: 테스트에서는 지정 경로 반환(실제 앱은 네이티브 열기 대화상자 필요) | `input[type=file]`의 name/size |
-| P1 | 애니메이션 FPS, 리사이즈 지연 | on_paint/gpui paint 횟수, 토글→올바른 크기 프레임 도착 시간 | 측정값 기록(통과/실패 아님) |
+| U4 | 커서 모양 | ✅ | 링크 위 hand, input 위 ibeam. `on_cursor_change` → gpui `.cursor()` |
+| U4 | 우클릭 컨텍스트 메뉴 | ✅ | CEF 기본 메뉴를 비우고 gpui가 메뉴를 그림(오버레이이므로 z-order 문제 없음). "Select all" 클릭 시 선택·메뉴 닫힘 |
+| U4 | 드래그 텍스트 선택 | ✅ | |
+| U6 | 다운로드 | ✅ | `DownloadHandler`로 앱이 경로 지정, 내용 일치 |
+| U6 | 파일 선택(`<input type=file>`) | ✅ | 테스트에서는 지정 경로 반환. **실제 앱은 네이티브 열기 대화상자를 연결해야 함** |
+| P1 | 애니메이션 프레임레이트 | ✅ 60fps | rAF 182회/3s, CEF on_paint 60.2/s, gpui paint 60.2/s (CPU 경로, 984x744 논리·2x) |
+| P1 | 리사이즈 지연 | 측정 | 사이드바 토글 → 올바른 크기의 프레임 도착까지 평균 32ms, 최대 67ms (10회). `was_resized` 뒤 `invalidate` 호출 필요(없으면 일부 토글에서 새 크기 프레임이 오지 않음) |
 | — | 권한 프롬프트(카메라/위치 등) | 미구현 | — |
+
+하니스 정리: 합성 우클릭은 `NSEvent.buttonNumber`가 0이라 gpui가 좌클릭으로 해석하므로 CGEvent 경로로 만들어야 한다(제품 문제가 아니라 테스트 방식의 한계). 최종 전체 실행: 34 PASS / 0 FAIL.
 
 검증 중 발견한 환경 제약:
 
@@ -116,9 +117,9 @@ Z1/Z2는 오버레이가 실제로 그려졌는지 대조군(사이드바 쪽 �
 
 ### 미검증 / 알려진 공백 (통과로 주장하지 않음)
 
-- 호버/커서 모양, 우클릭 메뉴, 드래그&드롭, 파일 다운로드/업로드 다이얼로그, 권한 프롬프트 — 미구현(U4, U6).
+- 드래그&드롭(페이지 간/파일 드롭), 권한 프롬프트, 실제 네이티브 파일 대화상자 연동 — 미구현.
 - 일반 문자는 텍스트 삽입을 IME commit 경로로, keydown/keyup만 별도 전달(keypress 없음). 실제 키보드 한글 입력은 사람이 확인 필요.
-- 프레임 전달은 CPU 복사 경로. 리사이즈 중 FPS(P1), 영상 재생, 고주사율 스크롤은 미측정. IOSurface 공유 텍스처 경로는 gpui의 `paint_surface`가 YCbCr 전용이라 gpui 수정이 필요할 것으로 보이나 시도하지 않았다.
+- 프레임 전달은 CPU 복사 경로. 영상 재생, 고해상도/고주사율 환경의 스크롤은 미측정(리사이즈 지연과 애니메이션 60fps는 측정함). IOSurface 공유 텍스처 경로는 gpui의 `paint_surface`가 YCbCr 전용이라 gpui 수정이 필요할 것으로 보이나 시도하지 않았다.
 - 샌드박스 비활성(`no_sandbox`), 코드서명/공증, 번들 구조의 배포 파이프라인 미검증. gpui `GPUIApplication`에 런타임으로 `CefAppProtocol`을 주입(`macapp.rs`) — 동작은 확인했으나 sendEvent 중첩 상태 추적은 단순화됨.
 - Google 실제 계정 로그인(자격증명 입력 이후 흐름), 패스키/WebAuthn, 확장 프로그램은 미검증.
 - 검증은 macOS arm64 단일 환경.

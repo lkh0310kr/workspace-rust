@@ -41,6 +41,10 @@ pub struct St {
     /// 컨텍스트 메뉴 요청(논리 좌표, 메인 뷰 기준) + 링크 URL
     pub ctx: Option<(i32, i32, String)>,
     pub ui_gen: u64,
+    /// 입력 계측: gpui→CEF 로 전달한 이벤트 수 / 마지막 위치
+    pub moves: u64,
+    pub last_move: (i32, i32, u32),
+    pub right_clicks: u64,
     pub downloads: Vec<String>,
     pub upload_path: Option<String>,
 }
@@ -65,6 +69,9 @@ impl Default for St {
             cursor: 0,
             ctx: None,
             ui_gen: 0,
+            moves: 0,
+            last_move: (0, 0, 0),
+            right_clicks: 0,
             downloads: vec![],
             upload_path: std::env::var("SPIKE_UPLOAD_FILE").ok(),
         }
@@ -251,6 +258,7 @@ wrap_display_handler! {
         ) -> ::std::os::raw::c_int {
             let k = if type_ == CursorType::HAND { 1 } else if type_ == CursorType::IBEAM { 2 } else if type_ == CursorType::CROSS { 3 } else { 0 };
             with(|st| {
+                st.log.push(format!("cursor_change {:?} -> {k}", type_));
                 if st.cursor != k {
                     st.cursor = k;
                     st.ui_gen += 1;

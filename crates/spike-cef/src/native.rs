@@ -199,10 +199,27 @@ pub fn mouse_move(w: &NSWindow, x: f64, y_top: f64) {
     mouse_ev(w, NSEventType::MouseMoved, x, y_top, 0, 0.0);
 }
 
+extern "C" {
+    fn CGEventCreateMouseEvent(source: *const std::ffi::c_void, ty: u32, p: NSPoint, button: u32) -> *mut std::ffi::c_void;
+}
+
+/// 우클릭. `mouseEventWithType:` 로 만든 NSEvent 는 buttonNumber 가 0 이라 gpui 가 좌클릭으로 해석하므로
+/// CGEvent(right button) → NSEvent 경로를 쓴다. (스크롤과 동일하게 locationInWindow 해석 트릭 사용)
 pub fn right_click(w: &NSWindow, x: f64, y_top: f64) {
     activate(w);
-    mouse_ev(w, NSEventType::RightMouseDown, x, y_top, 1, 1.0);
-    mouse_ev(w, NSEventType::RightMouseUp, x, y_top, 1, 0.0);
+    let g = geom(w);
+    let mtm = objc2_foundation::MainThreadMarker::new().unwrap();
+    let primary_h = objc2_app_kit::NSScreen::screens(mtm).objectAtIndex(0).frame().size.height;
+    let p = NSPoint::new(x, primary_h - (g.content_h - y_top));
+    for ty in [3u32 /* kCGEventRightMouseDown */, 4u32 /* kCGEventRightMouseUp */] {
+        unsafe {
+            let cg = CGEventCreateMouseEvent(std::ptr::null(), ty, p, 1);
+            if cg.is_null() { continue; }
+            let ev: Option<Retained<NSEvent>> = objc2::msg_send![objc2::class!(NSEvent), eventWithCGEvent: cg];
+            CFRelease(cg);
+            if let Some(ev) = ev { w.sendEvent(&ev); }
+        }
+    }
 }
 
 /// 좌클릭 드래그 (down → 여러 dragged → up)

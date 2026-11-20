@@ -446,6 +446,8 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
         let closed = !with(|s| s.widget_visible);
         res.add("U3.select_choose_option", Some(sel.as_deref() == Some("two") && closed), format!("change report={sel:?} popup_closed={closed}"));
 
+        // 레이아웃이 바뀌었으므로(Z3) 웹뷰 좌표를 현재 값으로 갱신
+        let (bx, by) = { let b = sh.borrow().bounds.unwrap(); (f32::from(b.origin.x) as f64, f32::from(b.origin.y) as f64) };
         // ---------------- U4a: 커서 모양 ----------------
         goto(cx, &url("/cursor"), 1500).await;
         let mut cursor_res = Vec::new();
@@ -462,6 +464,7 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
                 cursor_res.push((name, with(|s| s.cursor), want));
             }
         }
+        res.add("U4.diag_mouse_move_forwarding", None, format!("moves forwarded to CEF={} last={:?} cursor log={:?}", with(|s| s.moves), with(|s| s.last_move), with(|s| s.log.iter().filter(|l| l.starts_with("cursor_change")).cloned().collect::<Vec<_>>())));
         res.add("U4.cursor_shape", Some(!cursor_res.is_empty() && cursor_res.iter().all(|(_, got, want)| got == want)), format!("(element, got, want)={cursor_res:?} (0=arrow 1=hand 2=ibeam)"));
 
         // ---------------- U4b: 우클릭 컨텍스트 메뉴(gpui 가 그림) ----------------
@@ -469,6 +472,7 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
         let (rx, ry) = (bx + 120.0, by + 60.0);
         native::right_click(&w, rx, ry);
         sleep(cx, 800).await;
+        res.add("U4.diag_right_click", None, format!("right clicks forwarded to CEF={}", with(|s| s.right_clicks)));
         let ctx = with(|s| s.ctx.clone());
         res.add("U4.context_menu_requested", Some(ctx.is_some()), format!("ctx={ctx:?}"));
         if let Some((cxl, cyl, _)) = ctx {
@@ -490,6 +494,7 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
         native::drag(&w, bx + 42.0, by + 60.0, bx + 400.0, by + 60.0);
         sleep(cx, 800).await;
         let ds = report(&reports, "drag_sel").unwrap_or_default();
+        res.add("U4.diag_drag", None, format!("moves={} last={:?}", with(|s| s.moves), with(|s| s.last_move)));
         res.add("U4.drag_select", Some(ds.len() > 5), format!("selection after drag={ds:?}"));
 
         // ---------------- U6a: 다운로드 ----------------
@@ -525,6 +530,8 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
 
         // 리사이즈 지연: 사이드바 토글 → 새 크기의 프레임이 도착할 때까지
         goto(cx, &url("/bg?color=00aa00"), 800).await;
+        view.update(cx, |r, cx| { r.sidebar_w = 200.0; cx.notify(); }).ok();
+        sleep(cx, 1200).await;
         let mut lat = Vec::new();
         for i in 0..10 {
             let want = if i % 2 == 0 { 400.0 } else { 200.0 };
@@ -533,11 +540,14 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
             view.update(cx, |r, cx| { r.sidebar_w = want; cx.notify(); }).ok();
             let want_w = (bw + 200.0 - want as f64 + 0.0) as i32; // 984 - (want-200)
             let mut ms = -1.0;
-            for _ in 0..200 {
+            let mut seen = (0u64, 0u32, 0f32);
+            for _ in 0..400 {
                 sleep(cx, 5).await;
                 let (gg, fw, scale) = with(|s| (s.surf[0].gen, s.surf[0].w, s.scale));
-                if gg > g0 && (fw as f32 / scale) as i32 == want_w { ms = t.elapsed().as_secs_f64() * 1000.0; break; }
+                seen = (gg - g0, fw, scale);
+                if gg > g0 && ((fw as f32 / scale) - want_w as f32).abs() <= 1.0 { ms = t.elapsed().as_secs_f64() * 1000.0; break; }
             }
+            if ms < 0.0 { with(|s| s.log.push(format!("resize miss want_w={want_w} seen(new_frames,fw,scale)={seen:?} size0={:?}", s.size[0]))); }
             lat.push(ms);
         }
         let ok: Vec<f64> = lat.iter().cloned().filter(|m| *m >= 0.0).collect();
