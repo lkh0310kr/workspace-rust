@@ -119,7 +119,7 @@ CASES = [
     C("INPUT", "줌 상태에서 클릭 좌표 정확도(앱이 줌 배율로 변환해야 함)", {"cef156": "B6.click_accuracy_when_zoomed"}),
     C("INPUT", "줌 레벨이 같은 오리진에서 유지", {"cef156": "S3b.zoom_persists_per_origin"}),
     C("INPUT", "키 입력 인코딩 규칙(RAWKEYDOWN 단독은 2회 동작 → 기능 문자 필요, Cmd+방향키 미전달)", {}, {"cef156": fx("INFO", "실험(keyexp): RAWKEYDOWN 단독=편집키 2회 동작, +macOS 기능 문자=1회, Space는 +CHAR 필요, Cmd+←/→ 는 어떤 인코딩도 무효 → keys.rs 에 규칙·매핑 반영", "auto-headless", "218b7f5")}),
-    C("INPUT", "실제 한글 키보드 입력(자모 조합·영한 전환·후보창 위치), 일본어/중국어 IME", todo=("P0", "manual")),
+    C("INPUT", "실제 한글 키보드 입력(자모 조합), ime 페이지", {}, {"cef156": fx("PASS", "사용자가 앱에서 직접 한글을 입력해 정상 동작 확인(\"잘됨\"). 이전의 NSTextInputClient 호출 모사(INPUT-002)와 별개로 실제 키보드로 확인", "manual", "3446ac1")}),
     C("INPUT", "핀치 줌(트랙패드 magnify → ctrl+wheel 또는 zoom level), 한계값, 중심점", todo=("P0", "gui")),
     C("INPUT", "키보드 줌(Cmd +/−/0), 도메인별 기억 연동", todo=("P0", "headless")),
     C("INPUT", "휠 스크롤 정확도(픽셀/라인, 관성, 가로, 중첩 스크롤), 부드러운 스크롤", todo=("P0", "gui")),
@@ -131,6 +131,7 @@ CASES = [
     C("INPUT", "웹뷰↔gpui 입력칸 간 포커스 이동, 창 비활성/활성 시 캐럿·:focus", todo=("P0", "gui")),
     C("INPUT", "preventDefault 한 wheel/키가 gpui 단축키와 충돌하지 않음", todo=("P1", "gui")),
     C("INPUT", "이모지/특수문자 입력, 서식 붙여넣기", todo=("P2", "manual")),
+    C("INPUT", "일본어/중국어 IME, 후보 창 위치가 입력칸을 따라감(현재는 패널 좌상단 기준 고정)", todo=("P1", "manual")),
     # ================= NAV =================
     C("NAV", "뒤로/앞으로 이동", {"cef156": "B2a.back_forward_navigation"}),
     C("NAV", "can_go_back / can_go_forward 상태 콜백", {"cef156": "B2b.can_go_back_forward_state"}),

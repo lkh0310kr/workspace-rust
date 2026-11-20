@@ -30,7 +30,7 @@
 <!-- RESULTS:BEGIN (scripts/results.py render 로 생성, 직접 수정 금지) -->
 분류: **COMP** 합성·레이아웃 (z-index, 클립, 리사이즈) · **AUTH** 로그인·세션 · **STORE** 쿠키·저장소·프로필 · **INPUT** 입력 (키보드, 마우스, IME, 스크롤, 줌, 커서) · **NAV** 내비게이션 (히스토리, 탭, 팝업, 찾기, 로딩 상태) · **UI** 브라우저 UI 연동 (메뉴, 다이얼로그, 다운로드, DevTools, 권한) · **WEB** 웹 플랫폼·미디어·렌더링 · **IPC** 웹 ↔ Rust 통신 · **PERF** 성능 · **STAB** 안정성·프로세스·종료 · **SEC** 보안 · **PKG** 패키징·배포
 
-## 표 1. CEF 결과 — gpui + CEF off-screen rendering (150행: PASS 84 · FAIL 5 · INFO 15 · UNSUPPORTED 1 · TODO 45)
+## 표 1. CEF 결과 — gpui + CEF off-screen rendering (151행: PASS 85 · FAIL 5 · INFO 15 · UNSUPPORTED 1 · TODO 45)
 
 | ID | 분류 | 케이스 | 엔진 버전 | 결과 | 방법 | 상세 | 커밋 | 날짜 | 우선 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -96,7 +96,7 @@
 | INPUT-024 | INPUT | 줌 상태에서 클릭 좌표 정확도(앱이 줌 배율로 변환해야 함) | 156.0.31 | ✅ PASS | auto-headless | css center=(90,90), factor 2.00: click at css×factor hits=true, at raw css coords hits=false → 앱이 줌 배율로 좌표를 변환해야 함 | `3e34a0b` | 2026-11-20 |  |
 | INPUT-025 | INPUT | 줌 레벨이 같은 오리진에서 유지 | 156.0.31 | ✅ PASS | auto-headless | level after navigating same-origin page=3.80 | `3e34a0b` | 2026-11-20 |  |
 | INPUT-026 | INPUT | 키 입력 인코딩 규칙(RAWKEYDOWN 단독은 2회 동작 → 기능 문자 필요, Cmd+방향키 미전달) | 156.0.31 | ℹ️ INFO | auto-headless | 실험(keyexp): RAWKEYDOWN 단독=편집키 2회 동작, +macOS 기능 문자=1회, Space는 +CHAR 필요, Cmd+←/→ 는 어떤 인코딩도 무효 → keys.rs 에 규칙·매핑 반영 | `218b7f5` | 2026-11-20 |  |
-| INPUT-027 | INPUT | 실제 한글 키보드 입력(자모 조합·영한 전환·후보창 위치), 일본어/중국어 IME |  | ⬜ TODO | plan:manual |  |  |  | P0 |
+| INPUT-027 | INPUT | 실제 한글 키보드 입력(자모 조합), ime 페이지 | 156.0.31 | ✅ PASS | manual | 사용자가 앱에서 직접 한글을 입력해 정상 동작 확인("잘됨"). 이전의 NSTextInputClient 호출 모사(INPUT-002)와 별개로 실제 키보드로 확인 | `3446ac1` | 2026-11-20 |  |
 | INPUT-028 | INPUT | 핀치 줌(트랙패드 magnify → ctrl+wheel 또는 zoom level), 한계값, 중심점 |  | ⬜ TODO | plan:gui |  |  |  | P0 |
 | INPUT-029 | INPUT | 키보드 줌(Cmd +/−/0), 도메인별 기억 연동 |  | ⬜ TODO | plan:headless |  |  |  | P0 |
 | INPUT-030 | INPUT | 휠 스크롤 정확도(픽셀/라인, 관성, 가로, 중첩 스크롤), 부드러운 스크롤 |  | ⬜ TODO | plan:gui |  |  |  | P0 |
@@ -108,6 +108,7 @@
 | INPUT-036 | INPUT | 웹뷰↔gpui 입력칸 간 포커스 이동, 창 비활성/활성 시 캐럿·:focus |  | ⬜ TODO | plan:gui |  |  |  | P0 |
 | INPUT-037 | INPUT | preventDefault 한 wheel/키가 gpui 단축키와 충돌하지 않음 |  | ⬜ TODO | plan:gui |  |  |  | P1 |
 | INPUT-038 | INPUT | 이모지/특수문자 입력, 서식 붙여넣기 |  | ⬜ TODO | plan:manual |  |  |  | P2 |
+| INPUT-039 | INPUT | 일본어/중국어 IME, 후보 창 위치가 입력칸을 따라감(현재는 패널 좌상단 기준 고정) |  | ⬜ TODO | plan:manual |  |  |  | P1 |
 | NAV-001 | NAV | 뒤로/앞으로 이동 | 156.0.31 | ✅ PASS | auto-headless | back→http://127.0.0.1:18080/hist/2 back→http://127.0.0.1:18080/hist/1 fwd×2→http://127.0.0.1:18080/hist/3 | `3e34a0b` | 2026-11-20 |  |
 | NAV-002 | NAV | can_go_back / can_go_forward 상태 콜백 | 156.0.31 | ✅ PASS | auto-headless | at /hist/3 back=true fwd=false; at /hist/1 back=true (이전 항목 존재) fwd=true | `3e34a0b` | 2026-11-20 |  |
 | NAV-003 | NAV | 새로고침 | 156.0.31 | ✅ PASS | auto-headless | loading events 44→46 | `3e34a0b` | 2026-11-20 |  |
