@@ -183,3 +183,35 @@ pub fn disable_app_nap() -> Retained<objc2::runtime::AnyObject> {
         tok
     }
 }
+
+fn mouse_ev(w: &NSWindow, ty: NSEventType, x: f64, y_top: f64, click: isize, pressure: f32) {
+    let g = geom(w);
+    let ev = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        ty, NSPoint::new(x, g.content_h - y_top), NSEventModifierFlags::empty(), 0.0, g.window_number, None, 0, click, pressure,
+    )
+    .expect("mouse event");
+    w.sendEvent(&ev);
+}
+
+/// 마우스 이동 (hover / 커서 모양 검증용)
+pub fn mouse_move(w: &NSWindow, x: f64, y_top: f64) {
+    activate(w);
+    mouse_ev(w, NSEventType::MouseMoved, x, y_top, 0, 0.0);
+}
+
+pub fn right_click(w: &NSWindow, x: f64, y_top: f64) {
+    activate(w);
+    mouse_ev(w, NSEventType::RightMouseDown, x, y_top, 1, 1.0);
+    mouse_ev(w, NSEventType::RightMouseUp, x, y_top, 1, 0.0);
+}
+
+/// 좌클릭 드래그 (down → 여러 dragged → up)
+pub fn drag(w: &NSWindow, x1: f64, y1: f64, x2: f64, y2: f64) {
+    activate(w);
+    mouse_ev(w, NSEventType::LeftMouseDown, x1, y1, 1, 1.0);
+    for i in 1..=8 {
+        let t = i as f64 / 8.0;
+        mouse_ev(w, NSEventType::LeftMouseDragged, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, 1, 1.0);
+    }
+    mouse_ev(w, NSEventType::LeftMouseUp, x2, y2, 1, 0.0);
+}

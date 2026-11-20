@@ -446,6 +446,106 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
         let closed = !with(|s| s.widget_visible);
         res.add("U3.select_choose_option", Some(sel.as_deref() == Some("two") && closed), format!("change report={sel:?} popup_closed={closed}"));
 
+        // ---------------- U4a: 커서 모양 ----------------
+        goto(cx, &url("/cursor"), 1500).await;
+        let mut cursor_res = Vec::new();
+        for (sel, want, name) in [("#l", 1u8, "hand"), ("#i", 2u8, "ibeam")] {
+            reports.lock().unwrap().remove("q_rect");
+            exec(Which::Main, &format!("(()=>{{const r=document.querySelector({sel:?}).getBoundingClientRect();__report('q_rect',JSON.stringify([r.x+r.width/2,r.y+r.height/2]))}})()"));
+            let mut xy: Vec<f64> = vec![];
+            for _ in 0..30 { sleep(cx, 100).await; if let Some(v) = reports.lock().unwrap().get("q_rect").cloned() { xy = serde_json::from_str(&v).unwrap_or_default(); break; } }
+            if xy.len() == 2 {
+                native::mouse_move(&w, bx + 5.0, by + 300.0); // 기준 위치(arrow)로 리셋
+                sleep(cx, 200).await;
+                native::mouse_move(&w, bx + xy[0], by + xy[1]);
+                sleep(cx, 500).await;
+                cursor_res.push((name, with(|s| s.cursor), want));
+            }
+        }
+        res.add("U4.cursor_shape", Some(!cursor_res.is_empty() && cursor_res.iter().all(|(_, got, want)| got == want)), format!("(element, got, want)={cursor_res:?} (0=arrow 1=hand 2=ibeam)"));
+
+        // ---------------- U4b: 우클릭 컨텍스트 메뉴(gpui 가 그림) ----------------
+        goto(cx, &url("/ctx"), 1500).await;
+        let (rx, ry) = (bx + 120.0, by + 60.0);
+        native::right_click(&w, rx, ry);
+        sleep(cx, 800).await;
+        let ctx = with(|s| s.ctx.clone());
+        res.add("U4.context_menu_requested", Some(ctx.is_some()), format!("ctx={ctx:?}"));
+        if let Some((cxl, cyl, _)) = ctx {
+            // "Select all" = 3번째 항목
+            let ix = bx + cxl as f64 + 20.0;
+            let iy = by + cyl as f64 + crate::CTX_ITEM_H as f64 * 2.5;
+            native::click(&w, ix, iy);
+            sleep(cx, 700).await;
+            reports.lock().unwrap().remove("q_sel");
+            exec(Which::Main, "__report('q_sel',getSelection().toString())");
+            for _ in 0..30 { sleep(cx, 100).await; if reports.lock().unwrap().contains_key("q_sel") { break; } }
+            let sel = report(&reports, "q_sel").unwrap_or_default();
+            let closed = with(|s| s.ctx.is_none());
+            res.add("U4.context_menu_action", Some(sel.contains("select me") && closed), format!("selection after gpui menu 'Select all'={sel:?} menu_closed={closed}"));
+        }
+
+        // ---------------- U4c: 드래그 텍스트 선택 ----------------
+        goto(cx, &url("/drag"), 1500).await;
+        native::drag(&w, bx + 42.0, by + 60.0, bx + 400.0, by + 60.0);
+        sleep(cx, 800).await;
+        let ds = report(&reports, "drag_sel").unwrap_or_default();
+        res.add("U4.drag_select", Some(ds.len() > 5), format!("selection after drag={ds:?}"));
+
+        // ---------------- U6a: 다운로드 ----------------
+        let dl = std::env::current_dir().unwrap().join("target/downloads/spike.txt");
+        let _ = std::fs::remove_file(&dl);
+        goto(cx, &url("/download"), 500).await;
+        let mut content = String::new();
+        for _ in 0..50 { sleep(cx, 100).await; if let Ok(c) = std::fs::read_to_string(&dl) { content = c; if !content.is_empty() { break; } } }
+        let dlog = with(|s| s.downloads.clone());
+        res.add("U6.download", Some(content == "hello download"), format!("file content={content:?} log={dlog:?}"));
+
+        // ---------------- U6b: 파일 선택(업로드) ----------------
+        let up = std::env::current_dir().unwrap().join("target/upload-sample.txt");
+        let _ = std::fs::write(&up, "0123456789");
+        with(|s| s.upload_path = Some(up.to_string_lossy().into_owned()));
+        goto(cx, &url("/upload"), 1500).await;
+        let clicked = click_sel(cx, &sh, &reports, &w, Which::Main, "#f").await;
+        sleep(cx, 1500).await;
+        let upl = report(&reports, "upload").unwrap_or("NONE".into());
+        res.add("U6.file_chooser", Some(upl.contains("upload-sample.txt") && upl.contains("\"size\":10")), format!("clicked={clicked} report={upl}"));
+
+        // ---------------- U5: 프레임레이트 / 리사이즈 지연 ----------------
+        let paints0 = with(|s| s.paint_count);
+        let gp0 = sh.borrow().paints;
+        goto(cx, &url("/anim"), 0).await;
+        let t0 = std::time::Instant::now();
+        for _ in 0..80 { sleep(cx, 100).await; if report(&reports, "anim").is_some() { break; } }
+        let el = t0.elapsed().as_secs_f64();
+        let anim = report(&reports, "anim").unwrap_or("NONE".into());
+        let paints = with(|s| s.paint_count) - paints0;
+        let gp = sh.borrow().paints - gp0;
+        res.add("P1.animation_fps", None, format!("page rAF={anim}; CEF on_paint={paints} in {el:.1}s ({:.1}/s); gpui paints={gp} ({:.1}/s)", paints as f64 / el, gp as f64 / el));
+
+        // 리사이즈 지연: 사이드바 토글 → 새 크기의 프레임이 도착할 때까지
+        goto(cx, &url("/bg?color=00aa00"), 800).await;
+        let mut lat = Vec::new();
+        for i in 0..10 {
+            let want = if i % 2 == 0 { 400.0 } else { 200.0 };
+            let g0 = with(|s| s.surf[0].gen);
+            let t = std::time::Instant::now();
+            view.update(cx, |r, cx| { r.sidebar_w = want; cx.notify(); }).ok();
+            let want_w = (bw + 200.0 - want as f64 + 0.0) as i32; // 984 - (want-200)
+            let mut ms = -1.0;
+            for _ in 0..200 {
+                sleep(cx, 5).await;
+                let (gg, fw, scale) = with(|s| (s.surf[0].gen, s.surf[0].w, s.scale));
+                if gg > g0 && (fw as f32 / scale) as i32 == want_w { ms = t.elapsed().as_secs_f64() * 1000.0; break; }
+            }
+            lat.push(ms);
+        }
+        let ok: Vec<f64> = lat.iter().cloned().filter(|m| *m >= 0.0).collect();
+        let avg = ok.iter().sum::<f64>() / ok.len().max(1) as f64;
+        let max = ok.iter().cloned().fold(0.0, f64::max);
+        res.add("P1.resize_latency", Some(ok.len() == lat.len()), format!("toggle→correctly-sized frame: avg={avg:.0}ms max={max:.0}ms samples={lat:?} (측정 실패=-1)"));
+        view.update(cx, |r, cx| { r.sidebar_w = 400.0; cx.notify(); }).ok();
+
         // ---------------- P: 성능 ----------------
         let (pc, pus) = with(|s| (s.paint_count, s.paint_copy_us));
         let (gp, gus) = { let s = sh.borrow(); (s.paints, s.paint_us) };

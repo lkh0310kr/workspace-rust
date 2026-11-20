@@ -36,6 +36,13 @@ pub struct St {
     pub paint_count: u64,
     pub paint_copy_us: u128,
     pub create_requested: bool,
+    /// 0=arrow 1=hand 2=ibeam 3=cross (CEF cursor type → gpui CursorStyle)
+    pub cursor: u8,
+    /// 컨텍스트 메뉴 요청(논리 좌표, 메인 뷰 기준) + 링크 URL
+    pub ctx: Option<(i32, i32, String)>,
+    pub ui_gen: u64,
+    pub downloads: Vec<String>,
+    pub upload_path: Option<String>,
 }
 
 impl Default for St {
@@ -55,6 +62,11 @@ impl Default for St {
             paint_count: 0,
             paint_copy_us: 0,
             create_requested: false,
+            cursor: 0,
+            ctx: None,
+            ui_gen: 0,
+            downloads: vec![],
+            upload_path: std::env::var("SPIKE_UPLOAD_FILE").ok(),
         }
     }
 }
@@ -229,6 +241,121 @@ wrap_display_handler! {
             with(|st| st.log.push(format!("[console:{:?}] {m} ({s}:{line})", self.which)));
             0
         }
+
+        fn on_cursor_change(
+            &self,
+            _b: Option<&mut Browser>,
+            _cursor: *mut u8,
+            type_: CursorType,
+            _info: Option<&CursorInfo>,
+        ) -> ::std::os::raw::c_int {
+            let k = if type_ == CursorType::HAND { 1 } else if type_ == CursorType::IBEAM { 2 } else if type_ == CursorType::CROSS { 3 } else { 0 };
+            with(|st| {
+                if st.cursor != k {
+                    st.cursor = k;
+                    st.ui_gen += 1;
+                }
+            });
+            0
+        }
+    }
+}
+
+// ---------------------------------------------------------------- context menu: 네이티브 메뉴 대신 gpui 가 그린다
+wrap_context_menu_handler! {
+    pub struct CMH {}
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _b: Option<&mut Browser>,
+            _f: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            if let Some(m) = model {
+                m.clear(); // CEF 기본 메뉴 항목 제거
+            }
+            if let Some(p) = params {
+                let link = CefString::from(&p.link_url()).to_string();
+                let (x, y) = (p.xcoord(), p.ycoord());
+                with(|s| {
+                    s.ctx = Some((x, y, link));
+                    s.ui_gen += 1;
+                    s.log.push(format!("context_menu at {x},{y}"));
+                });
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- download
+wrap_download_handler! {
+    pub struct DLH {}
+    impl DownloadHandler {
+        fn can_download(&self, _b: Option<&mut Browser>, _url: Option<&CefString>, _m: Option<&CefString>) -> ::std::os::raw::c_int {
+            1
+        }
+
+        fn on_before_download(
+            &self,
+            _b: Option<&mut Browser>,
+            _item: Option<&mut DownloadItem>,
+            suggested_name: Option<&CefString>,
+            callback: Option<&mut BeforeDownloadCallback>,
+        ) -> ::std::os::raw::c_int {
+            let name = suggested_name.map(|n| n.to_string()).unwrap_or_else(|| "download".into());
+            let dir = std::env::current_dir().unwrap().join("target/downloads");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join(&name);
+            with(|s| s.downloads.push(format!("start {name}")));
+            if let Some(cb) = callback {
+                // show_dialog=0: 앱이 경로를 정한다 (실제 앱에서는 저장 대화상자로 대체)
+                cb.cont(Some(&CefString::from(path.to_string_lossy().as_ref())), 0);
+            }
+            1
+        }
+
+        fn on_download_updated(&self, _b: Option<&mut Browser>, item: Option<&mut DownloadItem>, _cb: Option<&mut DownloadItemCallback>) {
+            if let Some(i) = item {
+                if i.is_complete() == 1 {
+                    let n = i.received_bytes();
+                    with(|s| s.downloads.push(format!("complete {n} bytes")));
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- file chooser (<input type=file>)
+wrap_dialog_handler! {
+    pub struct DGH {}
+    impl DialogHandler {
+        fn on_file_dialog(
+            &self,
+            _b: Option<&mut Browser>,
+            _mode: FileDialogMode,
+            _title: Option<&CefString>,
+            _default: Option<&CefString>,
+            _filters: Option<&mut CefStringList>,
+            _exts: Option<&mut CefStringList>,
+            _descs: Option<&mut CefStringList>,
+            callback: Option<&mut FileDialogCallback>,
+        ) -> ::std::os::raw::c_int {
+            let path = with(|s| {
+                s.log.push("on_file_dialog".into());
+                s.upload_path.clone()
+            });
+            let Some(cb) = callback else { return 0 };
+            match path {
+                Some(p) => {
+                    let mut l = CefStringList::new();
+                    l.append(&p);
+                    cb.cont(Some(&mut l));
+                }
+                None => cb.cancel(), // 실제 앱: 네이티브 열기 대화상자로 대체
+            }
+            1
+        }
     }
 }
 
@@ -245,6 +372,15 @@ wrap_client! {
         }
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(DH::new(self.which))
+        }
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(CMH::new())
+        }
+        fn download_handler(&self) -> Option<DownloadHandler> {
+            Some(DLH::new())
+        }
+        fn dialog_handler(&self) -> Option<DialogHandler> {
+            Some(DGH::new())
         }
     }
 }

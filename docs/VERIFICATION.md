@@ -97,6 +97,18 @@ Z1/Z2는 오버레이가 실제로 그려졌는지 대조군(사이드바 쪽 �
 | U3 | `<select>` popup widget | ✅ | `OnPopupShow/Size` + `PET_POPUP` 별도 레이어로 그리면 렌더/선택 모두 동작 |
 | U3b | 배경 미지정 페이지 | ✅(수정 후) | **OSR 기본 배경은 투명** → gpui 뒷면이 비침. `BrowserSettings.background_color=0xFFFFFFFF` 필수 |
 
+구현 완료, **아직 실행하지 않음**(창을 띄워야 해서 사용자 작업 시간 확인 후 실행 예정):
+
+| ID | 항목 | 구현 | 판정 기준(하니스에 작성됨) |
+|---|---|---|---|
+| U4 | 커서 모양 | `on_cursor_change` → gpui `.cursor()` | 링크 위 hand, input 위 ibeam |
+| U4 | 우클릭 메뉴 | `ContextMenuHandler`로 기본 메뉴 제거, gpui가 메뉴를 그림(오버레이이므로 z-order 이점 확인 대상) | 우클릭 시 요청 수신, "Select all" 클릭 시 선택됨/메뉴 닫힘 |
+| U4 | 드래그 선택 | 마우스 이동에 눌림 상태 전달 | 드래그 후 `getSelection()` 비어있지 않음 |
+| U6 | 다운로드 | `DownloadHandler` → `target/downloads/` | 파일 내용 일치 |
+| U6 | 파일 선택 | `DialogHandler`: 테스트에서는 지정 경로 반환(실제 앱은 네이티브 열기 대화상자 필요) | `input[type=file]`의 name/size |
+| P1 | 애니메이션 FPS, 리사이즈 지연 | on_paint/gpui paint 횟수, 토글→올바른 크기 프레임 도착 시간 | 측정값 기록(통과/실패 아님) |
+| — | 권한 프롬프트(카메라/위치 등) | 미구현 | — |
+
 검증 중 발견한 환경 제약:
 
 - **gpui는 실제로 보이고 활성화된 창이 있어야 프레임을 그린다.** 화면 밖 / 거의 투명(alpha 0.03~0.3) / 비활성(Accessory) 창에서는 캡처뿐 아니라 레이아웃·입력 핸들러 갱신까지 멈춘다(App Nap 해제, `isKeyWindow` 오버라이드로도 해결 안 됨). 따라서 GUI 자동 검증은 창이 뜨고 포커스를 가져가며, 실행 중 사용자가 다른 앱을 조작하면 간헐 실패한다(측정: 고정 sleep → 조건 대기로 바꾼 뒤 연속 4회 25/25 통과).

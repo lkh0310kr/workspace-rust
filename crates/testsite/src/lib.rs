@@ -262,6 +262,34 @@ let c=0,w=0,m=0;addEventListener('click',()=>{c++;__report('mouse',{click:c,whee
 <script>document.getElementById('s').addEventListener('change',e=>__report('select',e.target.value))</script>",
             ),
         ),
+        // ---- U4/U5/U6 ----
+        ("GET", "/cursor") => (
+            "200 OK", vec![],
+            page("cursor", "<a id=l href=# style='display:block;margin:20px;font-size:24px'>link (hand)</a><input id=i style='margin:20px;font-size:24px;width:200px'>"),
+        ),
+        ("GET", "/ctx") => (
+            "200 OK", vec![],
+            page("ctx", "<p id=t style='font-size:28px;margin:40px'>select me with context menu</p>"),
+        ),
+        ("GET", "/drag") => (
+            "200 OK", vec![],
+            page("drag", "<p id=t style='font-size:28px;margin:40px;user-select:text'>drag select this sentence please</p>\
+<script>addEventListener('mouseup',()=>__report('drag_sel',getSelection().toString()))</script>"),
+        ),
+        ("GET", "/download") => (
+            "200 OK",
+            vec!["Content-Disposition: attachment; filename=spike.txt".into()],
+            "hello download".into(),
+        ),
+        ("GET", "/upload") => (
+            "200 OK", vec![],
+            page("upload", "<input type=file id=f style='margin:20px;font-size:20px'>\
+<script>document.getElementById('f').addEventListener('change',e=>{const f=e.target.files[0];__report('upload',JSON.stringify({name:f.name,size:f.size}))})</script>"),
+        ),
+        ("GET", "/anim") => (
+            "200 OK", vec![],
+            page("anim", "<style>html,body{margin:0;height:100%}</style><script>let n=0,t0=performance.now();function f(t){n++;document.body.style.background='hsl('+(t/5%360)+',80%,50%)';if(t-t0>3000){__report('anim',JSON.stringify({raf:n,ms:Math.round(t-t0)}));return}requestAnimationFrame(f)}requestAnimationFrame(f)</script>"),
+        ),
         (_, "/") => (
             "200 OK",
             vec![],

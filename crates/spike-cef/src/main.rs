@@ -22,6 +22,8 @@ use std::time::Duration;
 gpui::actions!(spike, [ToggleOverlay]);
 
 pub const PORT: u16 = 18080;
+pub const CTX_W: f32 = 160.0;
+pub const CTX_ITEM_H: f32 = 28.0;
 pub const TOOLBAR_H: f32 = 40.0;
 pub const FRAME_PAD: f32 = 8.0;
 pub const RADIUS: f32 = 12.0;
@@ -95,14 +97,14 @@ impl Root {
         Some((Which::Main, f32::from(pos.x - b.origin.x) as i32, f32::from(pos.y - b.origin.y) as i32))
     }
 
-    fn mouse_button(&mut self, ev_pos: gpui::Point<Pixels>, m: &gpui::Modifiers, click_count: usize, up: bool) {
+    fn mouse_button(&mut self, ev_pos: gpui::Point<Pixels>, m: &gpui::Modifiers, click_count: usize, up: bool, right: bool) {
         let Some((w, x, y)) = self.route(ev_pos) else { return };
         if let Some(h) = host(w) {
-            let e = MouseEvent { x, y, modifiers: mods(m, !up) };
+            let e = MouseEvent { x, y, modifiers: mods(m, !up && !right) };
             if !up {
                 h.set_focus(1);
             }
-            h.send_mouse_click_event(Some(&e), MouseButtonType::LEFT, up as _, click_count.max(1) as _);
+            h.send_mouse_click_event(Some(&e), if right { MouseButtonType::RIGHT } else { MouseButtonType::LEFT }, up as _, click_count.max(1) as _);
         }
     }
 }
@@ -240,13 +242,27 @@ impl Render for Root {
                             .child(
                                 div()
                                     .size_full()
+                                    .cursor(match with(|s| s.cursor) {
+                                        1 => gpui::CursorStyle::PointingHand,
+                                        2 => gpui::CursorStyle::IBeam,
+                                        3 => gpui::CursorStyle::Crosshair,
+                                        _ => gpui::CursorStyle::Arrow,
+                                    })
                                     .track_focus(&self.focus)
                                     .on_mouse_down(MouseButton::Left, cx.listener(|t, e: &MouseDownEvent, w, _| {
                                         w.focus(&t.focus);
-                                        t.mouse_button(e.position, &e.modifiers, e.click_count, false)
+                                        with(|s| if s.ctx.take().is_some() { s.ui_gen += 1 });
+                                        t.mouse_button(e.position, &e.modifiers, e.click_count, false, false)
+                                    }))
+                                    .on_mouse_down(MouseButton::Right, cx.listener(|t, e: &MouseDownEvent, w, _| {
+                                        w.focus(&t.focus);
+                                        t.mouse_button(e.position, &e.modifiers, 1, false, true)
+                                    }))
+                                    .on_mouse_up(MouseButton::Right, cx.listener(|t, e: &MouseUpEvent, _, _| {
+                                        t.mouse_button(e.position, &e.modifiers, 1, true, true)
                                     }))
                                     .on_mouse_up(MouseButton::Left, cx.listener(|t, e: &MouseUpEvent, _, _| {
-                                        t.mouse_button(e.position, &e.modifiers, e.click_count, true)
+                                        t.mouse_button(e.position, &e.modifiers, e.click_count, true, false)
                                     }))
                                     .on_mouse_move(cx.listener(|t, e: &MouseMoveEvent, _, _| {
                                         if let Some((w, x, y)) = t.route(e.position) {
@@ -409,6 +425,44 @@ impl Render for Root {
                         .child("gpui overlay (dropdown/modal)"),
                 )
             })
+            .when_some(with(|s| s.ctx.clone()), |d, (x, y, link)| {
+                let o = self.sh.borrow().bounds.map(|b| b.origin).unwrap_or_default();
+                let items = ["Copy", "Paste", "Select all", "Reload"];
+                d.child(
+                    div()
+                        .absolute()
+                        .left(o.x + px(x as f32))
+                        .top(o.y + px(y as f32))
+                        .w(px(CTX_W))
+                        .bg(rgb(0x2d2d2d))
+                        .text_color(rgb(0xffffff))
+                        .rounded(px(6.))
+                        .occlude()
+                        .children(items.into_iter().map(|label| {
+                            div()
+                                .h(px(CTX_ITEM_H))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .child(if link.is_empty() { label.to_string() } else { format!("{label}") })
+                                .on_mouse_down(MouseButton::Left, cx.listener(move |_, _, _, cx| {
+                                    let b = with(|s| s.main.clone());
+                                    if let Some(b) = b {
+                                        let f = b.focused_frame().or_else(|| b.main_frame());
+                                        match (label, f) {
+                                            ("Copy", Some(f)) => f.copy(),
+                                            ("Paste", Some(f)) => f.paste(),
+                                            ("Select all", Some(f)) => f.select_all(),
+                                            ("Reload", _) => b.reload(),
+                                            _ => {}
+                                        }
+                                    }
+                                    with(|s| { s.ctx = None; s.ui_gen += 1; s.log.push(format!("ctx_item {label}")); });
+                                    cx.notify();
+                                }))
+                        })),
+                )
+            })
     }
 }
 
@@ -489,7 +543,7 @@ fn main() {
                     with(|s| s.create_requested = true);
                     cefhost::create_main_browser(&url("/bg?color=ff0000"));
                 }
-                let g = with(|s| s.surf[0].gen + s.surf[1].gen + s.surf[2].gen + s.widget_visible as u64);
+                let g = with(|s| s.surf[0].gen + s.surf[1].gen + s.surf[2].gen + s.widget_visible as u64 + s.ui_gen);
                 if g != last {
                     last = g;
                     v2.update(cx, |_, cx| cx.notify()).ok();
