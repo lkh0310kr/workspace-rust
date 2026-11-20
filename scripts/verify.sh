@@ -6,18 +6,21 @@
 # 사용자 작업을 방해하므로 명시적으로 --yes 를 줘야 실행된다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[[ "${1:-}" == "--yes" ]] || { echo "창이 뜨고 포커스를 가져갑니다. 실행하려면: scripts/verify.sh --yes [--with-wry]"; exit 1; }
+COLOR=(); [[ " $* " == *" --colorful "* ]] && COLOR=(SPIKE_COLORFUL=1)
+[[ "${1:-}" == "--yes" ]] || { echo "창이 뜨고 포커스를 가져갑니다. 실행하려면: scripts/verify.sh --yes [--with-wry] [--colorful]"; echo "  기본은 흰색 UI(픽셀 검증 SKIP). 빨강/파랑/초록으로 z-index 등 픽셀 검증까지 하려면 --colorful"; exit 1; }
 export CEF_PATH="${CEF_PATH:-$HOME/.local/share/cef}"   # CEF 151 minimal 바이너리 위치
 run() { perl -e 'alarm 180; exec @ARGV' "$@"; }
 
 echo "== B. CEF OSR =="
 command -v bundle-cef-app >/dev/null || cargo install --git https://github.com/tauri-apps/cef-rs bundle-cef-app
+rm -rf target/bundle/spike-cef.app   # 덮어쓰기 시 macOS 서명 캐시 불일치(SIGKILL Code Signature Invalid) 방지
 bundle-cef-app spike-cef -o target/bundle >/dev/null
+codesign --force --deep -s - target/bundle/spike-cef.app
 CACHE="$PWD/target/cef-cache"; rm -rf "$CACHE"
-run env SPIKE_AUTOTEST=1 SPIKE_CACHE="$CACHE" target/bundle/spike-cef.app/Contents/MacOS/spike-cef 2>&1 | grep -E "RESULT|DONE" || true
-run env SPIKE_PHASE=2 SPIKE_AUTOTEST=1 SPIKE_CACHE="$CACHE" target/bundle/spike-cef.app/Contents/MacOS/spike-cef 2>&1 | grep -E "RESULT|DONE" || true
+run env "${COLOR[@]}" SPIKE_AUTOTEST=1 SPIKE_CACHE="$CACHE" target/bundle/spike-cef.app/Contents/MacOS/spike-cef 2>&1 | grep -E "RESULT|DONE" || true
+run env "${COLOR[@]}" SPIKE_PHASE=2 SPIKE_AUTOTEST=1 SPIKE_CACHE="$CACHE" target/bundle/spike-cef.app/Contents/MacOS/spike-cef 2>&1 | grep -E "RESULT|DONE" || true
 
-if [[ "${2:-}" == "--with-wry" ]]; then
+if [[ " $* " == *" --with-wry "* ]]; then
   echo "== A. wry =="
   cargo build -p spike-wry
   run env SPIKE_AUTOTEST=1 ./target/debug/spike-wry 2>&1 | grep -E "RESULT|DONE" || true

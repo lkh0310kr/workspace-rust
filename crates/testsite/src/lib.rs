@@ -113,7 +113,10 @@ fn route(r: &Req, reports: &Reports) -> (&'static str, Vec<String>, String) {
         }
         // ---- Z: 배경 단색 페이지. 클릭하면 report(webview_click) ----
         ("GET", "/bg") => {
-            let c = q(&r.query, "color").unwrap_or("ff0000".into());
+            let mut c = q(&r.query, "color").unwrap_or("ff0000".into());
+            if std::env::var("SPIKE_COLORFUL").is_err() {
+                c = "ffffff".into(); // 기본은 흰색 (눈에 띄는 색은 SPIKE_COLORFUL=1 일 때만)
+            }
             (
                 "200 OK",
                 vec![],
@@ -289,6 +292,17 @@ let c=0,w=0,m=0;addEventListener('click',()=>{c++;__report('mouse',{click:c,whee
         ("GET", "/anim") => (
             "200 OK", vec![],
             page("anim", "<style>html,body{margin:0;height:100%}</style><script>let n=0,t0=performance.now();function f(t){n++;document.body.style.background='hsl('+(t/5%360)+',80%,50%)';if(t-t0>3000){__report('anim',JSON.stringify({raf:n,ms:Math.round(t-t0)}));return}requestAnimationFrame(f)}requestAnimationFrame(f)</script>"),
+        ),
+        // ---- WebAuthn 단독 호출 (크래시 원인 분리용) ----
+        ("GET", "/webauthn") => (
+            "200 OK", vec![],
+            page("webauthn", "<pre id=result>start</pre><script>(async()=>{const out={};try{out.uvpaa=await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()}catch(e){out.uvpaa='ERR '+e.name}__report('webauthn_uvpaa',JSON.stringify(out));\
+try{const c=await navigator.credentials.get({publicKey:{challenge:new Uint8Array(32),timeout:4000,rpId:location.hostname,userVerification:'discouraged'}});out.get='OK '+(c&&c.type)}catch(e){out.get='ERR '+e.name}__report('webauthn_get',JSON.stringify(out));document.getElementById('result').textContent=JSON.stringify(out)})()</script>"),
+        ),
+        // ---- WebAuthn conditional mediation (autofill 팝업 UI 경로) ----
+        ("GET", "/webauthn-cond") => (
+            "200 OK", vec![],
+            page("webauthn-cond", "<input id=u autocomplete='username webauthn' style='margin:30px;font-size:22px;width:300px' placeholder='username'><pre id=result>start</pre><script>(async()=>{const out={};try{out.cma=await PublicKeyCredential.isConditionalMediationAvailable()}catch(e){out.cma='ERR '+e.name}__report('cond_cma',JSON.stringify(out));if(out.cma===true){try{const c=await navigator.credentials.get({mediation:'conditional',publicKey:{challenge:new Uint8Array(32),rpId:location.hostname,userVerification:'discouraged'}});out.get='OK'}catch(e){out.get='ERR '+e.name}__report('cond_get',JSON.stringify(out))}})()</script>"),
         ),
         (_, "/") => (
             "200 OK",

@@ -18,8 +18,8 @@ impl Results {
     fn add(&mut self, id: &str, pass: Option<bool>, detail: impl Into<String>) {
         // 화면 픽셀 기반 항목: 백그라운드(투명) 모드에서는 합성 결과를 캡처할 수 없으므로 SKIP 으로 명시
         const PIXEL: [&str; 6] = ["Z0.", "Z1.", "Z4.", "Z5.", "U3b.", "L7."];
-        if crate::native::background() && PIXEL.iter().any(|p| id.starts_with(p)) {
-            println!("RESULT {id} SKIP pixel check needs a visible window (run with --visible)");
+        if (crate::native::background() || !crate::colorful()) && PIXEL.iter().any(|p| id.starts_with(p)) {
+            println!("RESULT {id} SKIP pixel check needs distinct colors (run with SPIKE_COLORFUL=1 / verify.sh --colorful)");
             self.0.push((id.to_string(), "SKIP", "requires visible window".into()));
             return;
         }
@@ -234,6 +234,106 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
             return;
         }
 
+        if std::env::var("SPIKE_WEBAUTHN_COND").is_ok() {
+            println!("STEP conditional page");
+            goto(cx, "http://localhost:18080/webauthn-cond", 1500).await;
+            println!("STEP cma={:?}", report(&reports, "cond_cma"));
+            let _ = click_sel(cx, &sh, &reports, &w, Which::Main, "#u").await; // 입력칸 포커스 → autofill/passkey 팝업 유도
+            for i in 1..=10 {
+                sleep(cx, 1000).await;
+                println!("STEP wait {i}s widget_visible={} cma={:?} get={:?}", with(|s| s.widget_visible), report(&reports, "cond_cma"), report(&reports, "cond_get"));
+            }
+            let _ = shot(&w, "cond");
+            println!("STEP SURVIVED (no crash)");
+            finish(cx, &res, "cond");
+            return;
+        }
+        if std::env::var("SPIKE_WEBAUTHN_TEST").is_ok() {
+            println!("STEP webauthn page");
+            goto(cx, "http://localhost:18080/webauthn", 500).await;
+            for i in 1..=12 {
+                sleep(cx, 1000).await;
+                println!("STEP wait {i}s uvpaa={:?} get={:?}", report(&reports, "webauthn_uvpaa"), report(&reports, "webauthn_get"));
+            }
+            println!("STEP SURVIVED (no crash)");
+            finish(cx, &res, "webauthn");
+            return;
+        }
+        if let Ok(gid) = std::env::var("SPIKE_GOOGLE_LOGIN") {
+            // 구글 로그인 재현: 아이디 입력 → Next. (비밀번호는 입력하지 않는다)
+            let step = |n: &str| { println!("STEP {n}"); use std::io::Write; let _ = std::io::stdout().flush(); };
+            let (bx, by, bw, bh) = (f32::from(bnd.origin.x) as f64, f32::from(bnd.origin.y) as f64, f32::from(bnd.size.width) as f64, f32::from(bnd.size.height) as f64);
+            step("goto google");
+            goto(cx, "https://accounts.google.com/signin/v2/identifier?hl=en", 4000).await;
+            let _ = shot(&w, "g1_identifier");
+            // 교차 출처 페이지라 __report 를 못 쓴다 → 입력칸 좌표를 document.title 로 받아온다
+            with(|st| st.title.clear());
+            exec(Which::Main, "(()=>{const q=['input[name=identifier]','#identifierId','input[type=email]','input[autocomplete=username]','input[type=text]','input:not([type=hidden])'];let e=null;for(const s of q){e=document.querySelector(s);if(e)break}if(!e){document.title='__RECT:none inputs='+document.querySelectorAll('input').length+' url='+location.href.slice(0,60);return}const r=e.getBoundingClientRect();document.title='__RECT:'+JSON.stringify([r.x+r.width/2,r.y+r.height/2])})()");
+            let mut rect: Vec<f64> = vec![];
+            for _ in 0..30 {
+                sleep(cx, 100).await;
+                let t = with(|st| st.title.clone());
+                if let Some(j) = t.strip_prefix("__RECT:") { rect = serde_json::from_str(j).unwrap_or_default(); if rect.is_empty() { step(&format!("rect raw: {j}")); } break; }
+            }
+            step(&format!("email field rect={rect:?}"));
+            if rect.len() == 2 {
+                native::click(&w, bx + rect[0], by + rect[1]);
+            }
+            sleep(cx, 700).await;
+            // 입력 → 입력값 검증(재시도 3회). 입력이 안 된 채 Next 를 누르면 WebAuthn 흐름이 시작되지 않아 거짓 양성이 된다.
+            let mut typed_ok = false;
+            for attempt in 1..=3 {
+                step(&format!("type id (attempt {attempt})"));
+                if attempt > 1 && rect.len() == 2 { native::click(&w, bx + rect[0], by + rect[1]); sleep(cx, 500).await; }
+                let r = responder(&w);
+                ime_insert(&r, &gid);
+                sleep(cx, 800).await;
+                with(|st| st.title.clear());
+                exec(Which::Main, "(()=>{const q=['input[name=identifier]','#identifierId','input[type=email]','input[type=text]'];let e=null;for(const s of q){e=document.querySelector(s);if(e)break}document.title='__VAL:'+(e?e.value:'<no input>')})()");
+                for _ in 0..30 {
+                    sleep(cx, 100).await;
+                    let t = with(|st| st.title.clone());
+                    if let Some(v) = t.strip_prefix("__VAL:") { step(&format!("input value={v:?}")); typed_ok = v == gid; break; }
+                }
+                if typed_ok { break; }
+            }
+            let _ = shot(&w, "g2_typed");
+            if !typed_ok {
+                println!("RESULT G1.google_identifier_next_no_crash INVALID id was not typed; run does not exercise the login flow");
+                finish(cx, &res, "google");
+                return;
+            }
+            step("click Next button");
+            with(|st| st.title.clear());
+            exec(Which::Main, "(()=>{const b=[...document.querySelectorAll('button')].find(b=>/^\\s*next\\s*$/i.test(b.textContent));if(!b){document.title='__RECT:none';return}const r=b.getBoundingClientRect();document.title='__RECT:'+JSON.stringify([r.x+r.width/2,r.y+r.height/2])})()");
+            let mut nrect: Vec<f64> = vec![];
+            for _ in 0..30 {
+                sleep(cx, 100).await;
+                let t = with(|st| st.title.clone());
+                if let Some(j) = t.strip_prefix("__RECT:") { nrect = serde_json::from_str(j).unwrap_or_default(); break; }
+            }
+            step(&format!("next button rect={nrect:?}"));
+            if nrect.len() == 2 { native::click(&w, bx + nrect[0], by + nrect[1]); } else { native::key(&w, "\r", 36, 0); }
+            for i in 1..=14 {
+                sleep(cx, 1000).await;
+                step(&format!("wait {i}s after Next"));
+                if i == 4 || i == 8 { let _ = shot(&w, &format!("g3_after_next_{i}")); }
+            }
+            let keys = with(|st| st.log.iter().filter(|l| l.starts_with("key_down")).count());
+            let ime = with(|st| st.foreign_ime);
+            if keys > 0 || ime > 0 {
+                step(&format!("INVALID (user input interfered: key_down={keys}, composition_events={ime})"));
+                println!("RESULT G1.google_identifier_next_no_crash INVALID user input detected during run (keys={keys}, ime={ime})");
+                finish(cx, &res, "google");
+                return;
+            }
+            step("SURVIVED (no crash) with id verified, no foreign input");
+            res.add("G1.google_identifier_next_no_crash", Some(true), format!("typed id, Next, waited 14s, process alive; flags={:?}", std::env::args().skip(1).collect::<Vec<_>>()));
+            flush_cookies(cx).await;
+            finish(cx, &res, "google");
+            return;
+        }
+
         let (bx, by, bw, bh) = (f32::from(bnd.origin.x) as f64, f32::from(bnd.origin.y) as f64, f32::from(bnd.size.width) as f64, f32::from(bnd.size.height) as f64);
         res.add("SETUP.bounds", None, format!("webview bounds=({bx},{by},{bw},{bh}) toolbar={TOOLBAR_H} pad={FRAME_PAD}"));
 
@@ -278,7 +378,7 @@ pub fn run(cx: &mut App, view: Entity<Root>, sh: Sh, reports: Reports) {
         let expect = 400.0 + FRAME_PAD as f64;
         let nb = sh.borrow().bounds.unwrap();
         let (new_w, new_h) = with(|s| s.size[0]);
-        let z3_ok = if native::background() { (new_w as f64 - (bw - 200.0)).abs() <= 2.0 } else { left.map(|l| (l as f64 - expect).abs() <= 2.0).unwrap_or(false) };
+        let z3_ok = if native::background() || !crate::colorful() { (new_w as f64 - (bw - 200.0)).abs() <= 2.0 } else { left.map(|l| (l as f64 - expect).abs() <= 2.0).unwrap_or(false) };
         res.add("Z3.layout_sync", Some(z3_ok), format!("webview left edge x={left:?}, expected≈{expect}; browser logical size now {new_w}x{new_h} (canvas {:?}x{:?})", f32::from(nb.size.width), f32::from(nb.size.height)));
 
         // ---------------- Z4: 라운드 클립 (gpui paint_image corner_radii — 별도 우회 불필요) ----------------

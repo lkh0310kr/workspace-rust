@@ -41,6 +41,9 @@ pub struct St {
     /// 컨텍스트 메뉴 요청(논리 좌표, 메인 뷰 기준) + 링크 URL
     pub ctx: Option<(i32, i32, String)>,
     pub ui_gen: u64,
+    /// 하니스가 쓰지 않는 입력 경로(조합 입력)로 들어온 횟수 = 사용자 간섭 감지용
+    pub foreign_ime: u64,
+    pub title: String,
     /// 입력 계측: gpui→CEF 로 전달한 이벤트 수 / 마지막 위치
     pub moves: u64,
     pub last_move: (i32, i32, u32),
@@ -69,6 +72,8 @@ impl Default for St {
             cursor: 0,
             ctx: None,
             ui_gen: 0,
+            foreign_ime: 0,
+            title: String::new(),
             moves: 0,
             last_move: (0, 0, 0),
             right_clicks: 0,
@@ -195,6 +200,11 @@ wrap_life_span_handler! {
             // 팝업도 windowless 로 만들어 gpui 가 그리게 한다. window.opener 관계는 CEF 가 유지한다.
             if let Some(wi) = window_info {
                 wi.windowless_rendering_enabled = 1;
+                match std::env::var("SPIKE_RUNTIME").as_deref() {
+                    Ok("alloy") => wi.runtime_style = RuntimeStyle::ALLOY,
+                    Ok("chrome") => wi.runtime_style = RuntimeStyle::CHROME,
+                    _ => {}
+                }
             }
             if let Some(c) = client {
                 *c = Some(make_client(Which::Popup));
@@ -247,6 +257,11 @@ wrap_display_handler! {
             let s = source.map(|m| m.to_string()).unwrap_or_default();
             with(|st| st.log.push(format!("[console:{:?}] {m} ({s}:{line})", self.which)));
             0
+        }
+
+        fn on_title_change(&self, _b: Option<&mut Browser>, title: Option<&CefString>) {
+            let t = title.map(|t| t.to_string()).unwrap_or_default();
+            with(|s| s.title = t);
         }
 
         fn on_cursor_change(
@@ -404,6 +419,17 @@ wrap_browser_process_handler! {
         fn on_context_initialized(&self) {
             with(|s| s.ready = true);
         }
+
+        // 자식(GPU/Renderer 등) 프로세스에 전달되는 커맨드라인 기록: 내가 넣은 disable-features 가 실제 반영됐는지 확인용
+        fn on_before_child_process_launch(&self, command_line: Option<&mut CommandLine>) {
+            if let Some(cl) = command_line {
+                let line = CefString::from(&cl.command_line_string()).to_string();
+                let home = std::env::var("HOME").unwrap_or_default();
+                let _ = std::fs::OpenOptions::new().create(true).append(true)
+                    .open(format!("{home}/Library/Logs/spike-cef/child-cmdline.log"))
+                    .and_then(|mut f| { use std::io::Write; writeln!(f, "{line}\n") });
+            }
+        }
     }
 }
 
@@ -419,6 +445,17 @@ wrap_app! {
             // 개발 중 키체인 프롬프트 방지 (Electron 개발 모드와 동일한 관행)
             cl.append_switch(Some(&"use-mock-keychain".into()));
             cl.append_switch(Some(&"no-startup-window".into()));
+            // Google 로그인(비밀번호 단계)에서 passkey/iCloud 키체인 인증이 시작되며 OSR(네이티브 anchor 없음)에서 크래시하는 문제의 가설 검증:
+            // iCloud 키체인 passkey 경로를 끈다. 되돌려 재현하려면 SPIKE_ENABLE_ICLOUD_PASSKEY=1
+            if std::env::var("SPIKE_ENABLE_ICLOUD_PASSKEY").is_err() {
+                cl.append_switch_with_value(
+                    Some(&"disable-features".into()),
+                    Some(&"WebAuthenticationICloudKeychainForActiveWithDrive,WebAuthenticationICloudKeychainForActiveWithoutDrive,WebAuthenticationICloudKeychainForInactiveWithDrive,WebAuthenticationICloudKeychainForInactiveWithoutDrive,WebAuthenticationICloudKeychainForGoogle".into()),
+                );
+            }
+            // 로그인 크래시 조사용: WebAuthn/passkey/키체인 관련 상세 로그
+            cl.append_switch(Some(&"enable-logging".into()));
+            cl.append_switch_with_value(Some(&"vmodule".into()), Some(&"*webauthn*=2,*authenticator*=2,*touch_id*=2,*keychain*=2,*fido*=2".into()));
         }
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
             Some(BPH::new())
@@ -431,8 +468,16 @@ pub fn make_app() -> App {
 }
 
 pub fn create_main_browser(url: &str) {
+    // 런타임 스타일: 기본(Chrome)은 네이티브 Browser 창을 전제로 하는 UI 경로가 많다. SPIKE_RUNTIME=alloy|chrome 로 비교.
+    let style = match std::env::var("SPIKE_RUNTIME").as_deref() {
+        Ok("alloy") => RuntimeStyle::ALLOY,
+        Ok("chrome") => RuntimeStyle::CHROME,
+        _ => RuntimeStyle::DEFAULT,
+    };
+    with(|s| s.log.push(format!("runtime_style={:?}", std::env::var("SPIKE_RUNTIME"))));
     let wi = WindowInfo {
         windowless_rendering_enabled: 1,
+        runtime_style: style,
         ..Default::default()
     };
     let mut client = make_client(Which::Main);

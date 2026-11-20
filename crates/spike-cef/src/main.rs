@@ -29,6 +29,11 @@ pub const FRAME_PAD: f32 = 8.0;
 pub const RADIUS: f32 = 12.0;
 pub const OVERLAY: (f32, f32, f32, f32) = (-100.0, 120.0, 300.0, 200.0);
 
+/// 눈에 띄는 색(빨강/파랑/초록)은 픽셀 검증용. 기본은 흰색.
+pub fn colorful() -> bool {
+    std::env::var("SPIKE_COLORFUL").is_ok()
+}
+
 pub fn url(path: &str) -> String {
     format!("http://127.0.0.1:{PORT}{path}")
 }
@@ -136,6 +141,7 @@ impl EntityInputHandler for Root {
     }
     fn replace_and_mark_text_in_range(&mut self, _r: Option<StdRange<usize>>, text: &str, sel: Option<StdRange<usize>>, _w: &mut Window, _cx: &mut Context<Self>) {
         let n = text.encode_utf16().count();
+        with(|s| s.foreign_ime += 1);
         self.marked = Some(0..n);
         let target = if with(|s| s.popup.is_some()) { Which::Popup } else { Which::Main };
         if let Some(h) = host(target) {
@@ -191,7 +197,8 @@ impl Render for Root {
             move |_: &MouseDownEvent, _: &mut Window, _: &mut App| {
                 if let Some(b) = with(|s| s.main.clone()) {
                     if let Some(f) = b.main_frame() {
-                        f.load_url(Some(&CefString::from(url(path).as_str())));
+                        let u = if path.starts_with("http") { path.to_string() } else { url(path) };
+                        f.load_url(Some(&CefString::from(u.as_str())));
                     }
                 }
             }
@@ -227,6 +234,7 @@ impl Render for Root {
                     .child(btn("oauth").on_mouse_down(MouseButton::Left, nav("/oauth/start")))
                     .child(btn("ua").on_mouse_down(MouseButton::Left, nav("/ua")))
                     .child(btn("ime").on_mouse_down(MouseButton::Left, nav("/ime")))
+                    .child(btn("google").on_mouse_down(MouseButton::Left, nav("https://accounts.google.com/")))
                     .child(div().text_color(rgb(0xffffff)).child(format!("gpui overlay clicks: {}", self.overlay_clicks))),
             )
             .child(
@@ -238,7 +246,7 @@ impl Render for Root {
                         div()
                             .flex_1()
                             .p(px(FRAME_PAD))
-                            .bg(rgb(0x00aa00))
+                            .bg(rgb(if colorful() { 0x00aa00 } else { 0xffffff }))
                             .rounded(px(RADIUS))
                             .child(
                                 div()
@@ -421,8 +429,8 @@ impl Render for Root {
                         .top(px(oy))
                         .w(px(ow))
                         .h(px(oh))
-                        .bg(rgb(0x0000ff))
-                        .text_color(rgb(0xffffff))
+                        .bg(rgb(if colorful() { 0x0000ff } else { 0xffffff }))
+                        .text_color(rgb(if colorful() { 0xffffff } else { 0x333333 }))
                         .occlude()
                         .on_mouse_down(MouseButton::Left, cx.listener(|t, _, _, cx| { t.overlay_clicks += 1; cx.notify(); }))
                         .child("gpui overlay (dropdown/modal)"),
@@ -521,15 +529,20 @@ fn main() {
         std::mem::forget(_nap);
 
         // CEF 초기화 (gpui 의 NSApplication 이 만들어진 뒤)
-        let cache = std::env::var("SPIKE_CACHE").unwrap_or_else(|_| {
-            std::env::current_dir().unwrap().join("target/cef-cache").to_string_lossy().into_owned()
-        });
+        // 전용 캐시/로그 폴더 (open 으로 실행하면 cwd 가 / 라서 상대경로가 무효 → 시스템 Chromium 프로필로 폴백되는 문제 방지)
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let cache = std::env::var("SPIKE_CACHE").unwrap_or_else(|_| format!("{home}/Library/Application Support/spike-cef/cef-cache"));
+        let log_dir = format!("{home}/Library/Logs/spike-cef");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_file = format!("{log_dir}/cef.log");
         let settings = Settings {
             windowless_rendering_enabled: true as _,
             external_message_pump: true as _,
             no_sandbox: true as _,
             root_cache_path: CefString::from(cache.as_str()),
             cache_path: CefString::from(cache.as_str()),
+            log_file: CefString::from(log_file.as_str()),
+            log_severity: LogSeverity::INFO,
             ..Default::default()
         };
         let ok = initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut());

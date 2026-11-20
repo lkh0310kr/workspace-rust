@@ -115,6 +115,34 @@ Z1/Z2는 오버레이가 실제로 그려졌는지 대조군(사이드바 쪽 �
 - **gpui는 실제로 보이고 활성화된 창이 있어야 프레임을 그린다.** 화면 밖 / 거의 투명(alpha 0.03~0.3) / 비활성(Accessory) 창에서는 캡처뿐 아니라 레이아웃·입력 핸들러 갱신까지 멈춘다(App Nap 해제, `isKeyWindow` 오버라이드로도 해결 안 됨). 따라서 GUI 자동 검증은 창이 뜨고 포커스를 가져가며, 실행 중 사용자가 다른 앱을 조작하면 간헐 실패한다(측정: 고정 sleep → 조건 대기로 바꾼 뒤 연속 4회 25/25 통과).
 - 페이지 전환/레이아웃 변경 직후에는 이전 크기의 프레임이 잠깐 보이는 구간이 있다(OSR은 변화 시에만 프레임을 줌).
 
+### Google 로그인 크래시 조사 (진행 중, 원인 미확정)
+
+수동으로 `google` 버튼 → 아이디 → Next 시 앱이 죽음. `scripts/google-repro.sh <id> [추가 인자]`로 자동 재현(입력값 검증 + 간섭 감지 포함).
+
+확인된 사실:
+- 증상: 메인(UI) 스레드 CEF 내부 널 포인터 역참조(`SIGSEGV`, 주소 `0x10`, `x0=0`). 모든 크래시 리포트에서 CEF 오프셋이 동일(`0x19330e0, 0x65866d0, …`). CEF는 심볼이 제거돼 함수명은 알 수 없음.
+- 대상 계정에는 passkey가 있어 Next 직후 구글이 "Verifying it's you… Complete sign-in using your passkey"를 자동 시작한다(생존한 실행의 스크린샷으로 확인).
+- 크래시 직전 로그 시퀀스(매번 동일): `Touch ID authenticator unavailable (keychain-access-group entitlement missing)` → `Cannot use Bluetooth … no Bluetooth metadata in Info.plist` → USB 보안키(HID) 스캔 → 크래시. 서명 로그: `Unable to derive validation category for current process`.
+- 크래시는 **확률적**이다(같은 조건에서 크래시/생존이 섞임).
+
+시도했고 **해결되지 않은 것**(입력값 검증된 실행 기준):
+- iCloud 키체인 passkey feature 5개 비활성(`--disable-features`, 프로세스 인자로 전달) → 크래시.
+- 추가 WebAuthn UI feature 비활성 → 크래시. `--disable-blink-features=WebAuth` → 크래시.
+- 런타임 스타일 Alloy / Chrome 전환 → 양쪽 모두 크래시와 생존이 섞임(1회 생존은 우연이었음).
+- WebAuthn API 제거(렌더러에서 `PublicKeyCredential`/`navigator.credentials` 삭제) → 1회 크래시(표본 부족, 반복 측정은 중단됨).
+
+원인 후보를 **배제**한 로컬 실험(구글 없이):
+- `localhost`에서 모달 `navigator.credentials.get` 호출: 구글 크래시와 같은 FIDO 로그 시퀀스가 나오지만 크래시 없음.
+- passkey 조건부 중재(`autocomplete="username webauthn"`): 크래시 없음.
+→ 즉 "WebAuthn 호출 자체"만으로는 크래시하지 않으며, 구글의 passkey 단계(등록된 자격 증명으로 allowCredentials를 넘기는 요청 + 이후 UI 경로)에서만 발생한다. passkey 가설은 정황상 유력하지만 **확정되지 않았다**.
+
+측정 과정에서 생긴 **무효 결과(거짓 양성/음성)**와 교훈:
+- 아이디 입력이 비어 있는 채 Next가 눌려 "생존"으로 보인 실행(입력값 검증 추가로 해결).
+- 번들 덮어쓰기 후 코드서명 캐시 불일치로 `SIGKILL (Code Signature Invalid)`(번들 삭제 후 재생성 + ad-hoc 서명으로 해결).
+- 실행 중 사용자 키 입력이 창으로 들어가 결과가 오염됨(하니스가 키/조합 입력을 감지하면 해당 실행을 INVALID 처리하도록 추가; 단, 프로세스가 크래시한 실행은 감지 불가).
+
+다음 실험(미실행): 조건별 크래시율(각 n≥10) 비교 — 기본 / WebAuthn API 제거 / 보안키(HID) 비활성 / Info.plist에 Bluetooth 권한 문구 추가 + 키체인 엔타이틀먼트 서명. Electron 쪽은 passkey를 어떻게 다루는지(`ref-proj`, 기존 앱) 확인 필요.
+
 ### 미검증 / 알려진 공백 (통과로 주장하지 않음)
 
 - 드래그&드롭(페이지 간/파일 드롭), 권한 프롬프트, 실제 네이티브 파일 대화상자 연동 — 미구현.
