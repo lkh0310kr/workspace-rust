@@ -320,6 +320,61 @@ for(const [k,f] of Object.entries(tr)){if(k==='procmsg'&&!window.workspace){out[
 try{out[k+'_64B']=await run(f(64),500);out[k+'_1MB']=await run(f(1048576),40)}catch(e){out[k]='ERR '+e}}\
 __report('ipcbench',out)})()</script>"),
         ),
+        // ================= 헤드리스 검증 스위트용 페이지 =================
+        ("GET", "/edit") => (
+            "200 OK", vec![],
+            page("edit", "<textarea id=t rows=3 cols=40 style='font-size:24px;margin:10px'></textarea>\
+<p id=para style='font-size:30px;margin:10px'>alpha <span id=w>beta</span> gamma delta</p>"),
+        ),
+        ("GET", "/forms") => (
+            "200 OK", vec![],
+            page("forms", "<form onsubmit=\"__report('submit','1');return false\"><input id=a style='font-size:22px'><br><input id=b style='font-size:22px'><br><button id=c style='font-size:22px'>go</button></form>\
+<script>addEventListener('keydown',e=>{if(e.key==='Escape')__report('esc','1')})</script>"),
+        ),
+        ("GET", p) if p.starts_with("/hist/") => (
+            "200 OK", vec![],
+            page(&format!("hist {}", &p[6..]), &format!("<h2 id=n>hist {}</h2>", &p[6..])),
+        ),
+        ("GET", "/spa") => (
+            "200 OK", vec![],
+            page("spa", "<button id=go onclick=\"history.pushState({},'','/spa/x');document.title='spa-x'\" style='font-size:22px'>push</button>"),
+        ),
+        ("GET", "/find") => (
+            "200 OK", vec![],
+            page("find", "<p style='font-size:24px'>needle one. Needle two. needle three. NEEDLE four. needle five. nothing here. needle six.</p>"),
+        ),
+        ("GET", "/setcookie") => {
+            let name = q(&r.query, "name").unwrap_or("c".into());
+            let value = q(&r.query, "value").unwrap_or("1".into());
+            let mut ck = format!("Set-Cookie: {name}={value}; Path=/");
+            if let Some(m) = q(&r.query, "max") { ck.push_str(&format!("; Max-Age={m}")); }
+            if let Some(a) = q(&r.query, "attrs") { ck.push_str(&format!("; {}", a.replace('+', " "))); }
+            ("200 OK", vec![ck], page("setcookie", "<p>cookie set</p>"))
+        }
+        ("GET", "/cookies") => (
+            "200 OK", vec![],
+            page("cookies", &format!("<pre id=r>{}</pre>", r.cookies)),
+        ),
+        ("GET", "/dialogs") => (
+            "200 OK", vec![],
+            page("dialogs", "<p>dialogs</p>"),
+        ),
+        ("GET", "/titled") => (
+            "200 OK", vec![],
+            page("My Titled Page", "<link rel=icon href=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"><p>titled</p>"),
+        ),
+        ("GET", "/popups") => (
+            "200 OK", vec![],
+            page("popups", "<button id=pb onclick=\"window.open('/popchild','_blank','width=400,height=300')\" style='font-size:22px'>open (gesture)</button><br><button id=pb2 onclick=\"window.open('/popchild','_blank','noopener,width=300,height=300')\" style='font-size:22px'>open noopener (gesture)</button>"),
+        ),
+        ("GET", "/popchild") => (
+            "200 OK", vec![],
+            page("popchild", "<p>child</p><script>__report('popchild',window.opener?'OPENER':'NO_OPENER')</script>"),
+        ),
+        ("GET", "/zoom") => (
+            "200 OK", vec![],
+            page("zoom", "<style>body{margin:0}</style><div id=b style='width:100px;height:50px;background:#ddd'></div><button id=btn onclick=\"__report('zclick','1')\" style='margin:20px;width:140px;height:40px;font-size:18px'>zoom me</button>"),
+        ),
         (_, "/") => (
             "200 OK",
             vec![],

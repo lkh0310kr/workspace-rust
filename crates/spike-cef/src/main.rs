@@ -4,6 +4,8 @@
 mod autotest;
 mod headless;
 mod ipc_browser;
+mod keys;
+mod suite;
 mod cefhost;
 mod macapp;
 mod native;
@@ -78,6 +80,7 @@ fn host(which: Which) -> Option<BrowserHost> {
     with(|s| match which {
         Which::Main => s.main.clone(),
         Which::Popup => s.popup.clone(),
+        Which::Tab => None,
     })
     .and_then(|b| b.host())
 }
@@ -308,43 +311,30 @@ impl Render for Root {
                                                     "x" => f.cut(),
                                                     "v" => f.paste(),
                                                     "z" => if k.modifiers.shift { f.redo() } else { f.undo() },
-                                                    _ => {}
+                                                    _ => {
+                                                        // Cmd+방향키/Backspace → keys.rs 매핑(Home/End 등)
+                                                        if let Some(vk) = vkey(&k.key) {
+                                                            keys::send_key(&h, vk, mods(&k.modifiers, false));
+                                                        }
+                                                    }
                                                 }
                                             }
                                             return;
                                         }
-                                        // 일반 문자: 텍스트 삽입은 IME commit 경로(중복 방지)이므로 keydown/keyup 만 JS 에 전달. 조합 중이면 생략.
-                                        let printable = k.key.chars().count() == 1 && !k.modifiers.control && t.marked.is_none();
-                                        let vk_opt = vkey(&k.key).or_else(|| {
-                                            if !printable { return None; }
-                                            let c = k.key.chars().next().unwrap();
-                                            if c.is_ascii_alphabetic() { Some(c.to_ascii_uppercase() as i32) } else if c.is_ascii_digit() { Some(c as i32) } else { None }
-                                        });
-                                        if let Some(vk) = vk_opt {
-                                            let m = mods(&k.modifiers, false);
-                                            let mut ev = KeyEvent {
-                                                size: std::mem::size_of::<sys::cef_key_event_t>(),
-                                                type_: KeyEventType::RAWKEYDOWN,
-                                                modifiers: m,
-                                                windows_key_code: vk,
-                                                native_key_code: 0,
-                                                is_system_key: 0,
-                                                character: if printable { k.key.chars().next().map(|c| c as u16).unwrap_or(0) } else { 0 },
-                                                unmodified_character: if printable { k.key.chars().next().map(|c| c as u16).unwrap_or(0) } else { 0 },
-                                                focus_on_editable_field: 0,
-                                            };
-                                            with(|s| s.log.push(format!("key_down handler key={:?} vk={vk}", k.key)));
-                                            h.send_key_event(Some(&ev));
-                                            if vk == 13 {
-                                                ev.type_ = KeyEventType::CHAR;
-                                                ev.character = 13;
-                                                ev.unmodified_character = 13;
-                                                h.send_key_event(Some(&ev));
+                                        // 편집/이동 키는 공통 인코딩(keys.rs)으로 정확히 1회 전달.
+                                        // 일반 문자는 텍스트 삽입을 IME commit 경로로 하므로 keydown/keyup 만 JS 에 전달(조합 중이면 생략).
+                                        let m = mods(&k.modifiers, false);
+                                        let special = matches!(k.key.as_str(), "backspace" | "tab" | "enter" | "escape" | "space" | "pageup" | "pagedown" | "end" | "home" | "left" | "up" | "right" | "down" | "delete");
+                                        if special {
+                                            if let Some(vk) = vkey(&k.key) {
+                                                keys::send_key(&h, vk, m);
                                             }
-                                            ev.type_ = KeyEventType::KEYUP;
-                                            ev.character = 0;
-                                            ev.unmodified_character = 0;
-                                            h.send_key_event(Some(&ev));
+                                        } else if k.key.chars().count() == 1 && !k.modifiers.control && t.marked.is_none() {
+                                            let c = k.key.chars().next().unwrap();
+                                            let vk = if c.is_ascii_alphabetic() { Some(c.to_ascii_uppercase() as i32) } else if c.is_ascii_digit() { Some(c as i32) } else { None };
+                                            if let Some(vk) = vk {
+                                                keys::send_text_key_events(&h, vk, m, c as u16);
+                                            }
                                         }
                                         let _ = t;
                                     }))

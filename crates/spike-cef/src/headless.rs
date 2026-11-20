@@ -7,11 +7,11 @@ use crate::cefhost::{self, with};
 use cef::{args::Args, *};
 use std::time::{Duration, Instant};
 
-fn host() -> Option<BrowserHost> {
+pub(crate) fn host() -> Option<BrowserHost> {
     with(|s| s.main.clone()).and_then(|b| b.host())
 }
 
-fn pump(ms: u64) {
+pub(crate) fn pump(ms: u64) {
     let t = Instant::now();
     while t.elapsed() < Duration::from_millis(ms) {
         do_message_loop_work();
@@ -19,33 +19,38 @@ fn pump(ms: u64) {
     }
 }
 
-fn step(s: &str) {
+pub(crate) fn step(s: &str) {
     println!("STEP {s}");
     use std::io::Write;
     let _ = std::io::stdout().flush();
 }
 
-fn exec(js: &str) {
+pub(crate) fn exec(js: &str) {
     if let Some(f) = with(|s| s.main.clone()).and_then(|b| b.main_frame()) {
         f.execute_java_script(Some(&CefString::from(js)), Some(&CefString::from("spike://eval")), 0);
     }
 }
 
 /// JS 결과를 document.title 로 받는다 (교차 출처 페이지에서도 동작)
-fn title_query(js_expr: &str, prefix: &str) -> Option<String> {
+pub(crate) fn title_query(js_expr: &str, prefix: &str) -> Option<String> {
+    // 같은 값이 연속되면 title 이 안 바뀌어 이벤트가 없으므로, 호출마다 고유 번호를 붙인다.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+    let tag = format!("{prefix}{n}|");
     with(|s| s.title.clear());
-    exec(&format!("document.title='{prefix}'+({js_expr})"));
+    exec(&format!("document.title='{tag}'+({js_expr})"));
     for _ in 0..40 {
         pump(100);
         let t = with(|s| s.title.clone());
-        if let Some(v) = t.strip_prefix(prefix) {
+        if let Some(v) = t.strip_prefix(&tag) {
             return Some(v.to_string());
         }
     }
     None
 }
 
-fn click(x: f64, y: f64) {
+pub(crate) fn click(x: f64, y: f64) {
     let Some(h) = host() else { return };
     let e = MouseEvent { x: x as i32, y: y as i32, modifiers: 0 };
     h.set_focus(1);
@@ -55,7 +60,7 @@ fn click(x: f64, y: f64) {
     h.send_mouse_click_event(Some(&e), MouseButtonType::LEFT, 1, 1);
 }
 
-fn save_png(name: &str) {
+pub(crate) fn save_png(name: &str) {
     let (w, h, data) = with(|s| (s.surf[0].w, s.surf[0].h, s.surf[0].data.clone()));
     if w == 0 || h == 0 {
         return;
@@ -70,7 +75,7 @@ fn save_png(name: &str) {
     }
 }
 
-fn rect_of(selectors: &[&str]) -> Option<(f64, f64)> {
+pub(crate) fn rect_of(selectors: &[&str]) -> Option<(f64, f64)> {
     let list = selectors.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(",");
     let js = format!("(()=>{{let e=null;for(const s of [{list}]){{e=document.querySelector(s);if(e)break}}if(!e)return 'none';const r=e.getBoundingClientRect();return JSON.stringify([r.x+r.width/2,r.y+r.height/2])}})()");
     let v = title_query(&js, "__R:")?;
@@ -148,6 +153,7 @@ pub fn run(args: &Args, app: &mut cef::App) {
         root_cache_path: CefString::from(cache.as_str()),
         cache_path: CefString::from(cache.as_str()),
         log_file: CefString::from(format!("{log_dir}/cef.log").as_str()),
+        remote_debugging_port: if std::env::var("SPIKE_SUITE").is_ok() { 9222 } else { 0 },
         log_severity: if std::env::var("SPIKE_VERBOSE").is_ok() { LogSeverity::VERBOSE } else { LogSeverity::INFO },
         ..Default::default()
     };
@@ -182,6 +188,10 @@ pub fn run(args: &Args, app: &mut cef::App) {
     step("browser created");
     if let Some(h) = host() { step(&format!("actual runtime_style={:?}", h.runtime_style())); }
 
+    if let Ok(which) = std::env::var("SPIKE_SUITE") {
+        crate::suite::run(&which);
+        std::process::exit(0);
+    }
     if std::env::var("SPIKE_IPCBENCH").is_ok() {
         ipc_bench();
         std::process::exit(0);

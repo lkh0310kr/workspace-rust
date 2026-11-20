@@ -9,6 +9,7 @@ use std::time::Instant;
 pub enum Which {
     Main = 0,
     Popup = 1,
+    Tab = 2,
 }
 
 #[derive(Default)]
@@ -41,6 +42,20 @@ pub struct St {
     /// 컨텍스트 메뉴 요청(논리 좌표, 메인 뷰 기준) + 링크 URL
     pub ctx: Option<(i32, i32, String)>,
     pub ui_gen: u64,
+    pub tabs: Vec<Browser>,
+    pub tab_closed: u32,
+    pub tab_paints: std::collections::HashMap<i32, u64>,
+    pub block_no_gesture: bool,
+    pub popup_log: Vec<String>,
+    // ---- 브라우저 기능 검증용 이벤트 상태 ----
+    pub loading: (bool, bool, bool), // (is_loading, can_go_back, can_go_forward)
+    pub load_events: u64,
+    pub load_errors: Vec<String>,
+    pub find: (i32, i32, bool),      // (count, active_ordinal, final)
+    pub dialogs: Vec<String>,
+    pub favicons: Vec<String>,
+    pub address: String,
+    pub terminated: u32,
     /// 하니스가 쓰지 않는 입력 경로(조합 입력)로 들어온 횟수 = 사용자 간섭 감지용
     pub foreign_ime: u64,
     pub title: String,
@@ -72,6 +87,19 @@ impl Default for St {
             cursor: 0,
             ctx: None,
             ui_gen: 0,
+            tabs: vec![],
+            tab_closed: 0,
+            tab_paints: Default::default(),
+            block_no_gesture: false,
+            popup_log: vec![],
+            loading: (false, false, false),
+            load_events: 0,
+            load_errors: vec![],
+            find: (0, 0, false),
+            dialogs: vec![],
+            favicons: vec![],
+            address: String::new(),
+            terminated: 0,
             foreign_ime: 0,
             title: String::new(),
             moves: 0,
@@ -99,7 +127,7 @@ wrap_render_handler! {
     impl RenderHandler {
         fn view_rect(&self, _b: Option<&mut Browser>, rect: Option<&mut Rect>) {
             if let Some(rect) = rect {
-                let (w, h) = with(|s| s.size[self.which as usize]);
+                let (w, h) = with(|s| s.size[(self.which as usize).min(1)]);
                 rect.x = 0;
                 rect.y = 0;
                 rect.width = (w as i32).max(1);
@@ -136,7 +164,7 @@ wrap_render_handler! {
 
         fn on_paint(
             &self,
-            _b: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             type_: PaintElementType,
             _dirty: Option<&[Rect]>,
             buffer: *const u8,
@@ -144,6 +172,11 @@ wrap_render_handler! {
             height: ::std::os::raw::c_int,
         ) {
             if buffer.is_null() || width <= 0 || height <= 0 {
+                return;
+            }
+            if self.which == Which::Tab {
+                let id = browser.map(|b| b.identifier()).unwrap_or(-1);
+                with(|s| *s.tab_paints.entry(id).or_insert(0) += 1);
                 return;
             }
             let is_widget = type_ == PaintElementType::POPUP;
@@ -181,7 +214,7 @@ wrap_life_span_handler! {
             target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
             _disposition: WindowOpenDisposition,
-            _user_gesture: ::std::os::raw::c_int,
+            user_gesture: ::std::os::raw::c_int,
             features: Option<&PopupFeatures>,
             window_info: Option<&mut WindowInfo>,
             client: Option<&mut Option<Client>>,
@@ -191,6 +224,13 @@ wrap_life_span_handler! {
         ) -> ::std::os::raw::c_int {
             let url = target_url.map(|u| u.to_string()).unwrap_or_default();
             let (pw, ph) = features.map(|f| (f.width, f.height)).unwrap_or((0, 0));
+            let blocked = with(|s| {
+                s.popup_log.push(format!("popup url={url} gesture={user_gesture} features={pw}x{ph}"));
+                s.block_no_gesture && user_gesture == 0
+            });
+            if blocked {
+                return 1; // 1 = 팝업 취소 (사용자 제스처 없는 팝업 차단 정책)
+            }
             with(|s| {
                 s.log.push(format!("on_before_popup url={url} features={pw}x{ph}"));
                 s.popups_opened += 1;
@@ -219,6 +259,8 @@ wrap_life_span_handler! {
             with(|s| {
                 if is_popup {
                     s.popup = Some(b);
+                } else if self.which == Which::Tab || s.main.is_some() {
+                    s.tabs.push(b);
                 } else {
                     s.main = Some(b);
                 }
@@ -227,6 +269,14 @@ wrap_life_span_handler! {
 
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             let Some(b) = browser else { return };
+            if self.which == Which::Tab {
+                let id = b.identifier();
+                with(|s| {
+                    s.tabs.retain(|t| t.identifier() != id);
+                    s.tab_closed += 1;
+                });
+                return;
+            }
             if b.is_popup() == 1 {
                 with(|s| {
                     s.popup = None;
@@ -257,6 +307,16 @@ wrap_display_handler! {
             let s = source.map(|m| m.to_string()).unwrap_or_default();
             with(|st| st.log.push(format!("[console:{:?}] {m} ({s}:{line})", self.which)));
             0
+        }
+
+        fn on_address_change(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, url: Option<&CefString>) {
+            let u = url.map(|u| u.to_string()).unwrap_or_default();
+            with(|s| s.address = u);
+        }
+
+        fn on_favicon_urlchange(&self, _b: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
+            let _ = icon_urls;
+            with(|s| s.favicons.push("favicon_urlchange".into()));
         }
 
         fn on_title_change(&self, _b: Option<&mut Browser>, title: Option<&CefString>) {
@@ -382,6 +442,78 @@ wrap_dialog_handler! {
     }
 }
 
+// ---------------------------------------------------------------- load / find / jsdialog / request
+wrap_load_handler! {
+    pub struct LDH {}
+    impl LoadHandler {
+        fn on_loading_state_change(&self, _b: Option<&mut Browser>, is_loading: ::std::os::raw::c_int, back: ::std::os::raw::c_int, fwd: ::std::os::raw::c_int) {
+            with(|s| {
+                s.loading = (is_loading == 1, back == 1, fwd == 1);
+                s.load_events += 1;
+            });
+        }
+        fn on_load_error(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, code: Errorcode, text: Option<&CefString>, url: Option<&CefString>) {
+            let t = text.map(|t| t.to_string()).unwrap_or_default();
+            let u = url.map(|t| t.to_string()).unwrap_or_default();
+            with(|s| s.load_errors.push(format!("{code:?} {t} {u}")));
+        }
+    }
+}
+
+wrap_find_handler! {
+    pub struct FDH {}
+    impl FindHandler {
+        fn on_find_result(&self, _b: Option<&mut Browser>, _id: ::std::os::raw::c_int, count: ::std::os::raw::c_int, _rect: Option<&Rect>, active: ::std::os::raw::c_int, final_update: ::std::os::raw::c_int) {
+            with(|s| s.find = (count, active, final_update == 1));
+        }
+    }
+}
+
+wrap_jsdialog_handler! {
+    pub struct JDH {}
+    impl JsdialogHandler {
+        fn on_jsdialog(
+            &self,
+            _b: Option<&mut Browser>,
+            _origin: Option<&CefString>,
+            dialog_type: JsdialogType,
+            message: Option<&CefString>,
+            _default_prompt: Option<&CefString>,
+            callback: Option<&mut JsdialogCallback>,
+            _suppress: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            let m = message.map(|m| m.to_string()).unwrap_or_default();
+            with(|s| s.dialogs.push(format!("{dialog_type:?}:{m}")));
+            if let Some(cb) = callback {
+                // 앱이 직접 응답(실제 앱: gpui 모달로 대체). confirm=확인, prompt="spike-input"
+                cb.cont(1, Some(&CefString::from("spike-input")));
+            }
+            1
+        }
+        fn on_before_unload_dialog(&self, _b: Option<&mut Browser>, message: Option<&CefString>, _is_reload: ::std::os::raw::c_int, callback: Option<&mut JsdialogCallback>) -> ::std::os::raw::c_int {
+            let m = message.map(|m| m.to_string()).unwrap_or_default();
+            with(|s| s.dialogs.push(format!("beforeunload:{m}")));
+            if let Some(cb) = callback {
+                cb.cont(1, None);
+            }
+            1
+        }
+    }
+}
+
+wrap_request_handler! {
+    pub struct RQH {}
+    impl RequestHandler {
+        fn on_render_process_terminated(&self, _b: Option<&mut Browser>, status: TerminationStatus, code: ::std::os::raw::c_int, text: Option<&CefString>) {
+            let t = text.map(|t| t.to_string()).unwrap_or_default();
+            with(|s| {
+                s.terminated += 1;
+                s.log.push(format!("render_process_terminated {status:?} code={code} {t}"));
+            });
+        }
+    }
+}
+
 wrap_client! {
     pub struct CB {
         which: Which,
@@ -395,6 +527,18 @@ wrap_client! {
         }
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(DH::new(self.which))
+        }
+        fn load_handler(&self) -> Option<LoadHandler> {
+            Some(LDH::new())
+        }
+        fn find_handler(&self) -> Option<FindHandler> {
+            Some(FDH::new())
+        }
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
+            Some(JDH::new())
+        }
+        fn request_handler(&self) -> Option<RequestHandler> {
+            Some(RQH::new())
         }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
             Some(CMH::new())
@@ -544,4 +688,22 @@ pub fn apply_prefs_off() -> Vec<String> {
         out.push(format!("{name}: set false -> {ok} {}", err.to_string()));
     }
     out
+}
+
+/// 탭(추가 브라우저) 생성. ctx 를 주면 별도 프로필(캐시 경로)로 격리된다.
+pub fn create_tab(url: &str, ctx: Option<&mut RequestContext>) -> i32 {
+    let wi = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
+    let mut client = make_client(Which::Tab);
+    let bs = BrowserSettings { windowless_frame_rate: 30, background_color: 0xFFFF_FFFF, ..Default::default() };
+    browser_host_create_browser(Some(&wi), Some(&mut client), Some(&CefString::from(url)), Some(&bs), None, ctx)
+}
+
+/// 별도 프로필 컨텍스트 생성. cache_path 가 비어 있으면 메모리 전용(시크릿).
+pub fn make_context(cache_path: &str) -> Option<RequestContext> {
+    let st = RequestContextSettings {
+        size: std::mem::size_of::<sys::cef_request_context_settings_t>(),
+        cache_path: CefString::from(cache_path),
+        ..Default::default()
+    };
+    request_context_create_context(Some(&st), None)
 }
