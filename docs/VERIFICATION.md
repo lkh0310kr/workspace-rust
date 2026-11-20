@@ -1,153 +1,223 @@
-# gpui + 브라우저 임베딩 Feasibility 검증
+# gpui + 브라우저 임베딩 Feasibility 검증 (단일 산출물)
 
-목표: 기존 Workspace(Electron/Chromium)의 **브라우저 패널만** Rust(gpui)로 점진 이식할 수 있는지 검증한다.
-알려진 문제: (1) z-index — gpui UI를 웹뷰 위에 못 올림, (2) 로그인이 제대로 안 됨.
+목표: 기존 Workspace(Electron/Chromium)의 **브라우저 패널**을 Rust(gpui)로 점진 이식할 수 있는지 검증한다.
+알려진 문제는 (1) z-index(gpui UI를 웹뷰 위에 못 올림), (2) 로그인 불안정이었다.
 
-비교 대상 두 방식:
+**이 문서의 표가 검증의 유일한 기준이다.** 완료된 결과와 앞으로 할 일(TODO)이 같은 표에 들어 있다.
+관련 문서: [IPC 방식 비교](ipc-comparison.md) · [백로그](BACKLOG.md)
 
-| | A. `spike-wry` | B. `spike-cef` |
-|---|---|---|
-| 엔진 | WKWebView (macOS 시스템 WebKit) | Chromium (CEF 151, Electron과 동일 계열) |
-| 합성 방식 | 네이티브 NSView를 gpui 창 위에 child로 부착 | off-screen rendering → 픽셀을 gpui 씬에 직접 그림 |
+## 결론
 
-판정 기준은 두 스파이크가 동일한 로컬 테스트 사이트(`crates/testsite`)를 쓰며,
-페이지가 스스로 결과를 `POST /report`로 보고한다(엔진 무관, 사람이 눈으로 판단하지 않음).
-z-index 항목은 실제 화면을 `screencapture`로 찍어 픽셀을 검사한다.
+- **CEF(Chromium) off-screen rendering을 권장한다.** 웹 콘텐츠가 gpui 씬의 이미지이므로 z-order·클립·히트테스트가 gpui 규칙을 따르고(COMP-001~005), 엔진이 기존 Electron과 같은 Chromium이라 로그인 관련 항목이 통과한다(AUTH).
+- **wry(WKWebView)는 z-index를 구조적으로 해결하지 못한다**(네이티브 뷰가 gpui 위에 얹힘). 팝업·3rd-party 쿠키·Chrome UA도 막힌다.
+- **CEF 151.3.x는 Google 로그인(아이디 → Next)에서 100% 크래시**한다(AUTH-009, CEF 내부 버그). **CEF 156.0.31로 올리면 해결**된다. 비밀번호 로그인과 세션 유지는 사용자가 수동으로 확인했다. passkey는 지원하지 않는다(요구사항 아님).
 
-결과 표기: ✅ 통과 / ❌ 실패 / ⚠️ 부분·조건부 / ⬜ 미검증. 결과 칸은 실제 실행 후에만 채운다.
+## 표 읽는 법
 
-## 체크리스트
-
-### Z — 합성 / z-index
-| ID | 항목 | 판정 방법 |
-|---|---|---|
-| Z1 | gpui 오버레이(드롭다운/모달)가 웹뷰 영역 **위에** 그려짐 | 스크린샷 픽셀: 웹뷰 배경(빨강) 위 오버레이 영역이 오버레이 색(파랑)인가 |
-| Z2 | 오버레이 영역 클릭이 웹뷰가 아닌 gpui로 전달됨 | 웹뷰 페이지의 click 리스너 미호출 + gpui 클릭 카운터 증가 |
-| Z3 | 레이아웃 변경(사이드바 폭 조절)에 웹뷰가 즉시 동기화 | 변경 후 스크린샷에서 웹뷰 좌측 경계 위치 |
-| Z4 | 모서리 둥근 클립 / gpui 요소가 웹뷰 일부를 가림 | 스크린샷 픽셀 (모서리 바깥은 배경색) |
-| Z5 | 탭 전환(웹뷰 hide/show) 시 깜빡임/잔상 없음 | 전환 직후 스크린샷 |
-
-### L — 로그인 / 세션
-| ID | 항목 | 판정 방법 |
-|---|---|---|
-| L1 | 폼 로그인 → Set-Cookie 세션 유지 | `/me`가 서버 쪽에서 쿠키 수신 확인 |
-| L2 | 영속 쿠키가 앱 재시작 후에도 유지 | 2회차 실행 시 `/me`에서 `psid` 유지, 세션 쿠키 `ssid` 정책 기록 |
-| L3 | OAuth 팝업(`window.open` + `postMessage` + `window.close`) | 팝업 → opener로 code 전달 |
-| L4 | `target=_blank` 링크 처리 | 새 창 요청 핸들링 |
-| L5 | 3rd-party 쿠키(SameSite=None, cross-site iframe) | iframe이 쿠키를 다시 보내는지 |
-| L6 | UA / 자동화 탐지 표면 (`navigator.userAgent`, `window.chrome`, `userAgentData`) | Google 등 "안전하지 않은 브라우저" 차단 회피 가능성 |
-| L7 | 실제 `accounts.google.com` 진입 시 차단 문구 여부 | 페이지 텍스트 (자격증명 입력은 안 함) |
-
-### I — 입력
-| ID | 항목 | 판정 방법 |
-|---|---|---|
-| I1 | 영문 키 입력, Cmd+A/C/V | 페이지의 input value |
-| I2 | 한글 IME 조합 (compositionstart/update/end) | 페이지의 composition 이벤트 로그 |
-| I3 | 마우스 클릭/스크롤/hover | 페이지 이벤트 카운터 |
-| I4 | gpui 단축키 ↔ 웹뷰 포커스 간 라우팅 | 포커스 상태별 단축키 수신 위치 |
-
-### P — 성능 / 운영
-| ID | 항목 | 판정 방법 |
-|---|---|---|
-| P1 | 리사이즈 중 프레임 | 측정값 기록 |
-| P2 | 프레임 업로드 비용 (B) | ms/frame |
-| P3 | 번들 크기 / 배포 복잡도 | 실측 |
-| P4 | 다중 웹뷰(탭) | 동시 N개 |
-
-## 결과 기록
-
-실행일 2026-11-20, macOS 26.6 / arm64. 전부 `scripts/verify.sh`로 재현 가능(자동 하니스, 스크린샷 픽셀 + 페이지 자체 보고).
-Z1/Z2는 오버레이가 실제로 그려졌는지 대조군(사이드바 쪽 파랑 픽셀)을 함께 확인했다.
-
-| ID | A. wry (WKWebView) | B. CEF OSR (Chromium 151) | 비고 |
-|---|---|---|---|
-| Z1 오버레이가 웹뷰 위에 그려짐 | ❌ 웹뷰가 위 (오버레이 중심 픽셀 빨강) | ✅ 파랑 | A는 네이티브 NSView가 gpui Metal 레이어 위에 있음 |
-| Z2 오버레이 클릭 라우팅 | ❌ gpui 0회, 웹뷰가 클릭 수신 | ✅ gpui 1회, 웹뷰 미수신 | 합성 NSEvent → `NSWindow.sendEvent` 경로 |
-| Z3 레이아웃 동기화 | ✅ | ✅ | 사이드바 폭 200→400 후 좌측 경계 408 |
-| Z4 둥근 모서리 클립 | ⚠️ 기본은 직각. `CALayer.cornerRadius` 우회로 ✅ | ✅ `paint_image` corner_radii | |
-| Z5 hide/show | ✅ | ✅ | 깜빡임은 측정 안 함 |
-| L1 폼 로그인 쿠키 | ✅ | ✅ | |
-| L2 재시작 후 영속 쿠키 | ✅ (`data_store_identifier` 지정 시) | ✅ **단, 종료 전 `flush_store` 필요** | flush 없이 종료하면 CEF는 쿠키 유실(실측) |
-| L3 OAuth 팝업 postMessage/close | ❌ 팝업이 열리지 않음 (`Allow`만으로는 불가, 별도 구현 필요) | ✅ 팝업을 별도 windowless 브라우저로 받아 gpui에 그림, opener 유지 | |
-| L4 `target=_blank` | ✅ | ✅ | |
-| L5 3rd-party 쿠키 | ❌ BLOCKED | ✅ SENT | WebKit ITP / Secure 쿠키 정책 |
-| L6 UA/Chrome 표면 | ❌ Safari UA, `window.chrome` 없음 | ✅ Chrome/151, `chrome`·`userAgentData` 존재 | |
-| L7 Google 로그인 페이지 | ✅ 페이지 로드(자격증명 미입력) | ✅ 페이지 로드(스크린샷 확인) | 계정 입력 후 "안전하지 않은 브라우저" 차단 여부는 **미검증** |
-| I1 영문 입력 | ✅ | ✅ | |
-| I2 한글 IME 조합 이벤트 | ✅ | ✅ | **실제 한글 키보드가 아니라** `NSTextInputClient`(`setMarkedText`/`insertText`)를 직접 호출해 모사 |
-| I3 마우스 클릭 | — | ✅ | |
-| P2 프레임 비용 (B) | — | on_paint 복사 평균 0.9ms, RenderImage+paint_image 1.2~1.7ms (CPU 경로, GPU 업로드 제외) | 984x744 논리 / 2x |
-| P3 번들 크기 | 바이너리만 | 번들 370MB (CEF 프레임워크 343MB) | Electron과 동급 |
-| P4 다중 브라우저 | — | ✅ 메인 + 팝업 동시 | |
-
-### 결론
-
-- **A(wry)는 z-index 요구를 구조적으로 만족하지 못한다.** 네이티브 뷰는 gpui 위에 항상 얹힌다. 로그인 쪽도 WebKit 한계(3rd-party 쿠키, 팝업 처리, Safari UA)가 겹친다. 우회(오버레이를 별도 창으로 분리, 스냅샷 교체 등)는 가능하나 모든 오버레이마다 필요하고 이번에는 검증하지 않았다.
-- **B(CEF OSR)는 두 문제를 모두 해소했다.** 웹 콘텐츠가 gpui 씬의 이미지이므로 z-order/클립/히트테스트가 gpui 규칙을 따르고, 엔진이 기존 Electron과 같은 Chromium이라 로그인 관련 항목이 통과했다.
-- 점진 이식 관점에서는 **B를 권장**한다. 단, 아래 미해결 항목이 제품화 전 필수 작업이다.
-
-### 추가 검증 (CEF OSR 미검증 항목 순차 진행)
-
-| ID | 항목 | 결과 | 비고 |
-|---|---|---|---|
-| U1 | 마우스 휠 스크롤 | ✅ | 합성 CGEvent 스크롤: 6×(-60px) → scrollY=360, 3×(+60px) → 180 |
-| U2 | 일반 문자 JS `keydown` + 텍스트 | ✅ | `keydown:h`, 값 "hi". IME commit이 만드는 `keydown:Unidentified`가 문자당 1회 추가로 발생(실제 IME 입력과 동일) |
-| U2 | Cmd+A/C/V | ✅ | OSR엔 메뉴가 없어 `Frame.select_all/copy/paste`로 직접 전달해야 동작 |
-| I4 | gpui 단축키(Cmd+K) vs 웹뷰 포커스 | ✅ | gpui 액션만 실행, 페이지는 keydown을 못 받음 |
-| U3 | `<select>` popup widget | ✅ | `OnPopupShow/Size` + `PET_POPUP` 별도 레이어로 그리면 렌더/선택 모두 동작 |
-| U3b | 배경 미지정 페이지 | ✅(수정 후) | **OSR 기본 배경은 투명** → gpui 뒷면이 비침. `BrowserSettings.background_color=0xFFFFFFFF` 필수 |
-
-| ID | 항목 | 결과 | 비고 |
-|---|---|---|---|
-| U4 | 커서 모양 | ✅ | 링크 위 hand, input 위 ibeam. `on_cursor_change` → gpui `.cursor()` |
-| U4 | 우클릭 컨텍스트 메뉴 | ✅ | CEF 기본 메뉴를 비우고 gpui가 메뉴를 그림(오버레이이므로 z-order 문제 없음). "Select all" 클릭 시 선택·메뉴 닫힘 |
-| U4 | 드래그 텍스트 선택 | ✅ | |
-| U6 | 다운로드 | ✅ | `DownloadHandler`로 앱이 경로 지정, 내용 일치 |
-| U6 | 파일 선택(`<input type=file>`) | ✅ | 테스트에서는 지정 경로 반환. **실제 앱은 네이티브 열기 대화상자를 연결해야 함** |
-| P1 | 애니메이션 프레임레이트 | ✅ 60fps | rAF 182회/3s, CEF on_paint 60.2/s, gpui paint 60.2/s (CPU 경로, 984x744 논리·2x) |
-| P1 | 리사이즈 지연 | 측정 | 사이드바 토글 → 올바른 크기의 프레임 도착까지 평균 32ms, 최대 67ms (10회). `was_resized` 뒤 `invalidate` 호출 필요(없으면 일부 토글에서 새 크기 프레임이 오지 않음) |
-| — | 권한 프롬프트(카메라/위치 등) | 미구현 | — |
-
-하니스 정리: 합성 우클릭은 `NSEvent.buttonNumber`가 0이라 gpui가 좌클릭으로 해석하므로 CGEvent 경로로 만들어야 한다(제품 문제가 아니라 테스트 방식의 한계). 최종 전체 실행: 34 PASS / 0 FAIL.
-
-검증 중 발견한 환경 제약:
-
-- **gpui는 실제로 보이고 활성화된 창이 있어야 프레임을 그린다.** 화면 밖 / 거의 투명(alpha 0.03~0.3) / 비활성(Accessory) 창에서는 캡처뿐 아니라 레이아웃·입력 핸들러 갱신까지 멈춘다(App Nap 해제, `isKeyWindow` 오버라이드로도 해결 안 됨). 따라서 GUI 자동 검증은 창이 뜨고 포커스를 가져가며, 실행 중 사용자가 다른 앱을 조작하면 간헐 실패한다(측정: 고정 sleep → 조건 대기로 바꾼 뒤 연속 4회 25/25 통과).
-- 페이지 전환/레이아웃 변경 직후에는 이전 크기의 프레임이 잠깐 보이는 구간이 있다(OSR은 변화 시에만 프레임을 줌).
-
-### Google 로그인 크래시 — 원인 확정: CEF 151.3.x 버그, CEF 156으로 해결
-
-증상: `google` → 아이디 → Next 시 앱이 즉시 종료(`SIGSEGV`, 브라우저 프로세스 UI 스레드의 CEF 내부 널 포인터 역참조, 주소 `0x10`, 모든 리포트에서 CEF 오프셋 동일).
-
-**결론**: CEF 151(바이너리 151.3.18, 크레이트 151.8.1)의 버그이며 **CEF 156.0.31 + `cef` 크레이트 156.7.0에서는 재현되지 않는다.**
-
-| 조건 (창 없는 헤드리스 재현, 아이디 입력 검증됨) | 크래시 / 생존 |
+| 항목 | 설명 |
 |---|---|
-| CEF 151 기본 | **10 / 0** |
-| CEF 151 + WebAuthn API 제거(렌더러에서 `navigator.credentials` 삭제) | **10 / 0** |
-| CEF 151 + iCloud 키체인/passkey 관련 feature 비활성, `--disable-blink-features=WebAuth`, 프로필 prefs(비밀번호 관리자·자동완성) 비활성 시도 | 크래시(각 1~2회, 결정적 재현이라 효과 없음으로 판단) |
-| **CEF 156.0.31 기본** | **0 / 13** (모두 "Complete sign-in using your passkey" 화면 도달 확인) |
+| ID | `분류-번호`. 같은 케이스는 엔진이 달라도 ID가 같고 행만 늘어난다(엔진별 비교) |
+| 분류 | COMP 합성 · AUTH 로그인 · STORE 저장소 · INPUT 입력 · NAV 내비게이션 · UI 브라우저 UI 연동 · WEB 웹 플랫폼 · IPC 통신 · PERF 성능 · STAB 안정성 · SEC 보안 · PKG 배포 |
+| 결과 | ✅ PASS · ❌ FAIL · ℹ️ INFO(판정 없이 측정/관찰) · 🚫 UNSUPPORTED(지원하지 않음, 결정됨) · ⬜ TODO(아직 안 함) |
+| 방법 | `auto-headless` 창 없는 자동 실행 · `auto-gui` gpui 창이 필요한 자동 실행 · `manual` 사람이 직접 · `plan:*` TODO 의 실행 계획 |
+| 커밋 | 검증을 수행한 코드 버전. **`*` 는 커밋 전 작업트리에서 실행**했고 그 내용이 이 커밋이 됐다는 뜻. `+dirty` 는 미커밋 변경이 있는 상태 |
+| 날짜 | 검증 실행일 |
+| 우선 | TODO 의 우선순위(P0 필수, P1 일상 품질, P2 있으면 좋음) |
+| 엔진 | `wry (WKWebView)`, `CEF 151.3.18`, `CEF 156.0.31`(cef-rs 156.7.0). **CEF 151 결과는 156에서 재검증하지 않았다**(GUI 회귀는 창이 필요해 보류) |
 
-크래시 직전 시퀀스(151): 구글 페이지가 조건부(passkey 자동완성) WebAuthn 요청을 보냄(`rpId: google.com`, `allowCredentials: []`, `timeout: 600000`, PRF 확장) → Chrome FIDO 요청 시작 → Touch ID/Bluetooth 인증기 불가 로그 → USB(HID) 장치 열거 → 크래시. 대상 계정에는 passkey가 있어 Next 직후 구글이 이 흐름을 자동 시작한다.
+데이터 원본은 `docs/verification/results.csv`이고, 표는 `scripts/results.py render`로 생성한다(직접 수정하지 말 것).
 
-원인 분리 과정에서 배제/정정한 것:
-- 로컬 페이지의 모달·조건부 WebAuthn 호출만으로는 151에서도 크래시하지 않는다(구글의 특정 요청 조합에서만 발생).
-- 윈도우리스(OSR) 브라우저는 요청한 런타임 스타일과 무관하게 **항상 Alloy**로 생성된다(`chrome` 요청해도 Alloy). 따라서 Alloy/Chrome 비교 실험은 의미가 없었다.
-- GUI 실행 중 섞여 보이던 "확률적" 생존은 입력 실패/사용자 입력 간섭/번들 서명 불일치가 섞인 측정 오류였다. 창 없는 환경에서는 결정적(10/10)이다.
+<!-- RESULTS:BEGIN (scripts/results.py render 로 생성, 직접 수정 금지) -->
+### 요약
 
-**제약/남은 것**:
-- CEF 156에서도 이 앱은 Touch ID(keychain 엔타이틀먼트)와 Bluetooth(Info.plist 권한 문구)를 쓸 수 없어 **passkey 인증 자체는 완료되지 않는다**("Try another way"로 비밀번호/다른 방법 필요). 코드서명 + 엔타이틀먼트 설계는 별도 과제.
-- ✅ 비밀번호로 로그인 완주(사용자가 CEF 156 번들에서 수동 확인, passkey 화면에서 "Try another way" 선택). ✅ 앱을 껐다 켜도 로그인 상태 유지(사용자 수동 확인, 쿠키 주기 flush 적용). 2단계 인증 경로는 미검증.
-- 151.3.24(크레이트와 정확히 일치하는 바이너리)에서의 동작은 따로 확인하지 않음(151 계열 전체가 영향인지는 미확인).
-- CEF 156으로 올린 뒤 전체 GUI 회귀(`scripts/verify.sh --yes --colorful`)는 아직 실행하지 않음.
+| 분류 | 설명 | PASS | FAIL | INFO | UNSUPPORTED | TODO |
+|---|---|---|---|---|---|---|
+| COMP | 합성·레이아웃 (z-index, 클립, 리사이즈) | 12 | 2 | 0 | 0 | 4 |
+| AUTH | 로그인·세션 | 13 | 4 | 3 | 1 | 1 |
+| STORE | 쿠키·저장소·프로필 | 4 | 0 | 0 | 0 | 2 |
+| INPUT | 입력 (키보드, 마우스, IME, 스크롤, 줌, 커서) | 27 | 0 | 1 | 0 | 11 |
+| NAV | 내비게이션 (히스토리, 탭, 팝업, 찾기, 로딩 상태) | 10 | 0 | 1 | 0 | 4 |
+| UI | 브라우저 UI 연동 (메뉴, 다이얼로그, 다운로드, DevTools, 권한) | 7 | 0 | 0 | 0 | 10 |
+| WEB | 웹 플랫폼·미디어·렌더링 | 0 | 0 | 0 | 0 | 4 |
+| IPC | 웹 ↔ Rust 통신 | 1 | 1 | 4 | 0 | 2 |
+| PERF | 성능 | 1 | 0 | 2 | 0 | 3 |
+| STAB | 안정성·프로세스·종료 | 1 | 0 | 1 | 0 | 3 |
+| SEC | 보안 | 0 | 0 | 0 | 0 | 2 |
+| PKG | 패키징·배포 | 0 | 0 | 2 | 0 | 3 |
+| **합계** | | **76** | **7** | **14** | **1** | **49** |
 
-재현/측정 도구: `scripts/google-headless.sh <id> <횟수>`(창·포커스 없음, 프레임은 `target/shots/headless-*.png`로 저장).
+### 전체 결과 (단일 표)
 
-### 미검증 / 알려진 공백 (통과로 주장하지 않음)
+| ID | 분류 | 케이스 | 엔진 | 결과 | 방법 | 상세 | 커밋 | 날짜 | 우선 |
+|---|---|---|---|---|---|---|---|---|---|
+| COMP-001 | COMP | gpui 오버레이(모달/드롭다운)가 웹 콘텐츠 위에 그려짐 | CEF 151.3.18 | ✅ PASS | auto-gui | pixel at overlay center (over web content)=[0, 0, 245]; blue=gpui on top, red=webview on top | `2b5b01e*` | 2026-11-20 |  |
+| COMP-001 | COMP | gpui 오버레이(모달/드롭다운)가 웹 콘텐츠 위에 그려짐 | wry (WKWebView) macOS 26.6 WebKit | ❌ FAIL | auto-gui | pixel at overlay center=[234, 51, 35]; blue=gpui on top, red=native webview on top | `9389bb2*` | 2026-11-20 |  |
+| COMP-002 | COMP | 오버레이 영역 클릭이 gpui 로 전달됨(웹뷰가 가로채지 않음) | CEF 151.3.18 | ✅ PASS | auto-gui | gpui overlay_clicks=1, webview_clicks=Some("1") (gpui=1 & webview stays 1 expected) | `2b5b01e*` | 2026-11-20 |  |
+| COMP-002 | COMP | 오버레이 영역 클릭이 gpui 로 전달됨(웹뷰가 가로채지 않음) | wry (WKWebView) macOS 26.6 WebKit | ❌ FAIL | auto-gui | gpui overlay_clicks=0, webview_clicks=Some("2") (gpui=1 & webview stays 1 expected) | `9389bb2*` | 2026-11-20 |  |
+| COMP-003 | COMP | 레이아웃 변경(사이드바 폭)에 웹뷰 영역이 동기화됨 | CEF 151.3.18 | ✅ PASS | auto-gui | webview left edge x=Some(408), expected≈408; browser logical size now 784x744 (canvas 784.0x744.0) | `2b5b01e*` | 2026-11-20 |  |
+| COMP-003 | COMP | 레이아웃 변경(사이드바 폭)에 웹뷰 영역이 동기화됨 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | webview left edge x=Some(408), expected≈408 | `9389bb2*` | 2026-11-20 |  |
+| COMP-004 | COMP | 둥근 모서리 클립 | CEF 151.3.18 | ✅ PASS | auto-gui | corner pixel=[76, 167, 48] (not red = clipped by gpui rounded mask) | `2b5b01e*` | 2026-11-20 |  |
+| COMP-004 | COMP | 둥근 모서리 클립 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | [우회 필요: 네이티브 CALayer.cornerRadius 를 직접 적용해야 함] corner pixel before radius=[234, 51, 35] (red = squared), after CALayer.cornerRadius=[76, 167, 48] | `9389bb2*` | 2026-11-20 |  |
+| COMP-005 | COMP | 웹뷰 숨김/표시(탭 전환) | CEF 151.3.18 | ✅ PASS | auto-gui | hidden px=[76, 167, 48], shown px=[234, 51, 35] | `2b5b01e*` | 2026-11-20 |  |
+| COMP-005 | COMP | 웹뷰 숨김/표시(탭 전환) | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | hidden px=[76, 167, 48], shown px=[234, 51, 35] | `9389bb2*` | 2026-11-20 |  |
+| COMP-006 | COMP | 배경 미지정 페이지가 불투명 흰색으로 그려짐(OSR 기본은 투명) | CEF 151.3.18 | ✅ PASS | auto-gui | page without CSS background pixel=[255, 255, 255] (white expected; green = transparent OSR bg leaks gpui) | `2b5b01e*` | 2026-11-20 |  |
+| COMP-007 | COMP | <select> 팝업 위젯 렌더링 | CEF 151.3.18 | ✅ PASS | auto-gui | widget_visible=true rect=(36, 62, 68, 93) | `2b5b01e*` | 2026-11-20 |  |
+| COMP-008 | COMP | <select> 항목 선택 → change 이벤트·팝업 닫힘 | CEF 151.3.18 | ✅ PASS | auto-gui | change report=Some("two") popup_closed=true | `2b5b01e*` | 2026-11-20 |  |
+| COMP-009 | COMP | 메인 + 팝업 브라우저 동시 렌더(팝업을 gpui 레이어로 그림) | CEF 151.3.18 | ✅ PASS | auto-gui | OAuth 팝업이 gpui 중앙 레이어로 렌더, opener 유지, 닫힘 처리 | `2b5b01e*` | 2026-11-20 |  |
+| COMP-010 | COMP | 리사이즈/스플리터 드래그 중 깜빡임·잔상 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| COMP-011 | COMP | gpui 오버레이 위 입력 차단, 웹뷰 영역 밖으로 나가는 드롭다운 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| COMP-012 | COMP | 고DPI/다중 모니터 DPI 변경, 텍스트 선명도 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| COMP-013 | COMP | 다크모드(prefers-color-scheme) 연동 | CEF | ⬜ TODO | plan:headless |  |  |  | P2 |
+| AUTH-001 | AUTH | 폼 로그인 → Set-Cookie 세션 유지 | CEF 151.3.18 | ✅ PASS | auto-gui | /me={"psid":true,"ssid":true} | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-001 | AUTH | 폼 로그인 → Set-Cookie 세션 유지 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | /me={"psid":true,"ssid":true} | `9389bb2*` | 2026-11-20 |  |
+| AUTH-002 | AUTH | 영속 쿠키가 앱 재시작 후에도 유지 | CEF 151.3.18 | ✅ PASS | auto-gui | after restart /me={"psid":true,"ssid":true} | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-002 | AUTH | 영속 쿠키가 앱 재시작 후에도 유지 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | after restart /me={"psid":true,"ssid":false} | `9389bb2*` | 2026-11-20 |  |
+| AUTH-003 | AUTH | 세션 쿠키 재시작 후 정책(정보) | CEF 151.3.18 | ℹ️ INFO | auto-gui | ssid kept after restart: true | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-003 | AUTH | 세션 쿠키 재시작 후 정책(정보) | wry (WKWebView) macOS 26.6 WebKit | ℹ️ INFO | auto-gui | ssid kept after restart: false | `9389bb2*` | 2026-11-20 |  |
+| AUTH-004 | AUTH | OAuth 팝업(window.open + postMessage + close) | CEF 151.3.18 | ✅ PASS | auto-gui | clicked=true popup_shown=true popup_clicked=true report=Some("OAUTH_OK:abc123") popup_closed_count=1 | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-004 | AUTH | OAuth 팝업(window.open + postMessage + close) | wry (WKWebView) macOS 26.6 WebKit | ❌ FAIL | auto-gui | clicked=true report=None | `9389bb2*` | 2026-11-20 |  |
+| AUTH-005 | AUTH | target=_blank 링크 처리 | CEF 151.3.18 | ✅ PASS | auto-gui | clicked=true report=Some("OPENED") | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-005 | AUTH | target=_blank 링크 처리 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | clicked=true report=Some("OPENED") | `9389bb2*` | 2026-11-20 |  |
+| AUTH-006 | AUTH | 3rd-party 쿠키(SameSite=None, cross-site iframe) | CEF 151.3.18 | ✅ PASS | auto-gui | report=Some("TP:SENT") | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-006 | AUTH | 3rd-party 쿠키(SameSite=None, cross-site iframe) | wry (WKWebView) macOS 26.6 WebKit | ❌ FAIL | auto-gui | report=Some("TP:BLOCKED") (Chromium allows; WebKit ITP typically blocks) | `9389bb2*` | 2026-11-20 |  |
+| AUTH-007 | AUTH | UA·자동화 탐지 표면(Chrome UA, window.chrome, userAgentData) | CEF 151.3.18 | ✅ PASS | auto-gui | {"ua":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36","webdriver":false,"chrome":"object","uaData":"object","brands":["Chromium","Not=A?Brand"],"vendor":"Google Inc.","platform":"MacIntel","lang":"en-US"} | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-007 | AUTH | UA·자동화 탐지 표면(Chrome UA, window.chrome, userAgentData) | wry (WKWebView) macOS 26.6 WebKit | ❌ FAIL | auto-gui | {"ua":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)","webdriver":false,"chrome":"undefined","uaData":"undefined","brands":null,"vendor":"Apple Computer, Inc.","platform":"MacIntel","lang":"en-US"} | `9389bb2*` | 2026-11-20 |  |
+| AUTH-008 | AUTH | Google 로그인 페이지 로드 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | url="https:\/\/accounts.google.com\/v3\/signin\/identifier?hl=en&flowName=WebLiteSignIn&flowEntry=ServiceLogin&dsh=S-634803707:1795135231417611" text="\nSign in\nUse your Google Account\n\nEmail or phone\nForgot email?\nNot your computer? Use a private browsing window to sign in. Learn more about using Guest mode\nNext\nCreate account\n\nHelpPrivacyTerms" | `9389bb2*` | 2026-11-20 |  |
+| AUTH-009 | AUTH | Google 로그인: 아이디 입력 → Next 에서 크래시 없음(passkey 단계 도달) | CEF 151.3.18 | ❌ FAIL | auto-headless | 10/10 크래시(창 없는 헤드리스). 브라우저 프로세스 UI 스레드 CEF 내부 널 역참조(SIGSEGV, 주소 0x10, 오프셋 0x19330e0). 구글의 조건부 passkey 요청(rpId google.com, allowCredentials [], timeout 600000) 직후. WebAuthn API 제거·feature 비활성·prefs 비활성으로 해결 안 됨 | `f164c33*` | 2026-11-20 |  |
+| AUTH-009 | AUTH | Google 로그인: 아이디 입력 → Next 에서 크래시 없음(passkey 단계 도달) | CEF 156.0.31 | ✅ PASS | auto-headless | 0/13 크래시, 모두 'Complete sign-in using your passkey' 화면 도달(PNG 확인) → 151 버그, 156에서 해결 | `f164c33*` | 2026-11-20 |  |
+| AUTH-010 | AUTH | Google 비밀번호 로그인 완주(passkey 화면에서 'Try another way') | CEF 156.0.31 | ✅ PASS | manual | 사용자가 수동으로 로그인 성공 | `cc43ae1*` | 2026-11-20 |  |
+| AUTH-011 | AUTH | 앱 재시작 후 로그인 상태 유지(주기적 쿠키 flush) | CEF 156.0.31 | ✅ PASS | manual | 사용자가 수동 확인 | `cc43ae1*` | 2026-11-20 |  |
+| AUTH-012 | AUTH | passkey(Touch ID/Bluetooth) 인증 완료 | CEF 156.0.31 | 🚫 UNSUPPORTED | auto-headless | keychain-access-groups 엔타이틀먼트·Bluetooth Info.plist 권한 없이는 불가. 비밀번호 폴백으로 충분(요구사항 아님). BACKLOG | `f164c33*` | 2026-11-20 |  |
+| AUTH-013 | AUTH | 종료 직전 쿠키 flush 필요(없으면 CEF 영속 쿠키 유실) | CEF 151.3.18 | ℹ️ INFO | auto-gui | flush 없이 종료 시 psid 유실을 실측 → 주기 flush/종료 시 flush 필수 | `2b5b01e*` | 2026-11-20 |  |
+| AUTH-014 | AUTH | Google 외 서드파티 로그인(GitHub/Apple/Microsoft/네이버/카카오), 2단계 인증 | CEF | ⬜ TODO | plan:manual |  |  |  | P0 |
+| STORE-001 | STORE | 쿠키: JS 가시성 vs 서버 수신(HttpOnly), 세션/영속 | CEF 156.0.31 | ✅ PASS | auto-headless | document.cookie="pers=1; sess=2" server saw="pers=1; sess=2; hon=3" (HttpOnly hidden from JS, visible to server) | `218b7f5` | 2026-11-20 |  |
+| STORE-002 | STORE | Rust(cookie manager)에서 쿠키 설정 → 서버가 수신 | CEF 156.0.31 | ✅ PASS | auto-headless | set_cookie->1 server saw="pers=1; sess=2; hon=3; mgr=fromrust" | `218b7f5` | 2026-11-20 |  |
+| STORE-003 | STORE | 쿠키 개별 삭제 | CEF 156.0.31 | ✅ PASS | auto-headless | after delete mgr: "pers=1; sess=2; hon=3" | `218b7f5` | 2026-11-20 |  |
+| STORE-004 | STORE | 쿠키 전체 삭제 | CEF 156.0.31 | ✅ PASS | auto-headless | after delete all: "" | `218b7f5` | 2026-11-20 |  |
+| STORE-005 | STORE | 프로필/세션 분리(RequestContext 별 캐시 경로, Electron partition 대응), 시크릿(메모리) 모드 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| STORE-006 | STORE | localStorage/IndexedDB 영속, 쿠키 SameSite 정책별 전송 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| INPUT-001 | INPUT | 영문 텍스트 입력 | CEF 151.3.18 | ✅ PASS | auto-gui | value="abc한" | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-001 | INPUT | 영문 텍스트 입력 | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | value="abc한" | `9389bb2*` | 2026-11-20 |  |
+| INPUT-002 | INPUT | 한글 IME 조합 이벤트(NSTextInputClient 호출 모사) | CEF 151.3.18 | ✅ PASS | auto-gui | responder=GPUIView value="abc한" log=["input:abc","compositionstart:","compositionupdate:ㅎ","input:ㅎ","compositionupdate:하","input:하","compositionupdate:한","input:한","compositionupdate:한","input:한","compositionend:한"] | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-002 | INPUT | 한글 IME 조합 이벤트(NSTextInputClient 호출 모사) | wry (WKWebView) macOS 26.6 WebKit | ✅ PASS | auto-gui | responder=..NSKVONotifying_wry::wkwebview::class::wry_web_view::WryWebView0.57.3 value="abc한" log=["input:abc","compositionstart:","compositionupdate:ㅎ","input:ㅎ","compositionupdate:하","input:하","compositionupdate:한","input:한","input","input:한","compositionend:한"] | `9389bb2*` | 2026-11-20 |  |
+| INPUT-003 | INPUT | 마우스 클릭 | CEF 151.3.18 | ✅ PASS | auto-gui | mouse report={"click":1,"wheel":0,"move":0} | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-004 | INPUT | 휠 스크롤(gpui 경로) | CEF 151.3.18 | ✅ PASS | auto-gui | after 6x(-60px) scrollY=Some("360"); after 3x(+60px) scrollY=Some("180") | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-005 | INPUT | 일반 문자 JS keydown + 텍스트 삽입 | CEF 151.3.18 | ✅ PASS | auto-gui | value="hi" log=["keydown:h","keydown:Unidentified","input:h","keydown:i","keydown:Unidentified","input:i"] handler_calls=["key_down handler key=\"h\" vk=72", "key_down handler key=\"i\" vk=73"] | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-006 | INPUT | Cmd+A / Cmd+C(클립보드) | CEF 151.3.18 | ✅ PASS | auto-gui | clipboard after Cmd+A,Cmd+C="hi" (sentinel was SENTINEL) | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-007 | INPUT | Cmd+V 붙여넣기 | CEF 151.3.18 | ✅ PASS | auto-gui | input value after Cmd+V="PASTED" | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-008 | INPUT | gpui 단축키가 웹뷰 포커스 중에도 gpui 로 감 | CEF 151.3.18 | ✅ PASS | auto-gui | gpui action count 0->1; page saw k keydown: false | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-009 | INPUT | 커서 모양(링크 hand / 입력칸 ibeam) | CEF 151.3.18 | ✅ PASS | auto-gui | (element, got, want)=[("hand", 1, 1), ("ibeam", 2, 2)] (0=arrow 1=hand 2=ibeam) | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-010 | INPUT | 드래그 텍스트 선택 | CEF 151.3.18 | ✅ PASS | auto-gui | selection after drag="drag select this sentence ple" | `2b5b01e*` | 2026-11-20 |  |
+| INPUT-011 | INPUT | 키보드 스크롤(↓/PageDown/End/Home/Space) | CEF 156.0.31 | ✅ PASS | auto-headless | start=0 down×3=120 pagedown=880 end=4200 home=0 space=760 | `218b7f5` | 2026-11-20 |  |
+| INPUT-012 | INPUT | 편집 키: 입력/Backspace/Delete/← | CEF 156.0.31 | ✅ PASS | auto-headless | typed="hello world" backspace="hello worl" left×2+delete="hello wol" | `218b7f5` | 2026-11-20 |  |
+| INPUT-013 | INPUT | Shift+Home 선택 | CEF 156.0.31 | ✅ PASS | auto-headless | selection after Shift+Home="hello wo" | `218b7f5` | 2026-11-20 |  |
+| INPUT-014 | INPUT | Cmd+← 줄 처음(OSR 미전달 → Home 으로 매핑) | CEF 156.0.31 | ✅ PASS | auto-headless | caret after End, Cmd+←=0 (0 expected) | `218b7f5` | 2026-11-20 |  |
+| INPUT-015 | INPUT | Opt+→ 단어 이동 | CEF 156.0.31 | ✅ PASS | auto-headless | caret after Opt+→=5 (5 expected: end of 'hello') | `218b7f5` | 2026-11-20 |  |
+| INPUT-016 | INPUT | 전체 선택·실행 취소(frame API) | CEF 156.0.31 | ✅ PASS | auto-headless | select_all="hello wol" after undo="hello worl" | `218b7f5` | 2026-11-20 |  |
+| INPUT-017 | INPUT | Tab / Shift+Tab 포커스 순서 | CEF 156.0.31 | ✅ PASS | auto-headless | a→b→c, shift+tab→b (start a) | `218b7f5` | 2026-11-20 |  |
+| INPUT-018 | INPUT | Enter 로 폼 제출 | CEF 156.0.31 | ✅ PASS | auto-headless | submit events=1 | `218b7f5` | 2026-11-20 |  |
+| INPUT-019 | INPUT | Escape keydown 전달 | CEF 156.0.31 | ✅ PASS | auto-headless | Escape keydown events=1 | `218b7f5` | 2026-11-20 |  |
+| INPUT-020 | INPUT | 더블클릭 단어 선택 | CEF 156.0.31 | ✅ PASS | auto-headless | double-click selection="beta" | `218b7f5` | 2026-11-20 |  |
+| INPUT-021 | INPUT | 트리플클릭 문단 선택 | CEF 156.0.31 | ✅ PASS | auto-headless | triple-click selection="alpha beta gamma delta" | `218b7f5` | 2026-11-20 |  |
+| INPUT-022 | INPUT | Shift+클릭 범위 선택 | CEF 156.0.31 | ✅ PASS | auto-headless | selection after click + shift-click="lpha beta gamma" | `218b7f5` | 2026-11-20 |  |
+| INPUT-023 | INPUT | 줌 레벨 변경 시 레이아웃 반영 | CEF 156.0.31 | ✅ PASS | auto-headless | level=3.80 innerWidth 1100→550 (ratio 2.00, ≈2 expected) | `218b7f5` | 2026-11-20 |  |
+| INPUT-024 | INPUT | 줌 상태에서 클릭 좌표 정확도(앱이 줌 배율로 변환해야 함) | CEF 156.0.31 | ✅ PASS | auto-headless | css center=(90,90), factor 2.00: click at css×factor hits=true, at raw css coords hits=false → 앱이 줌 배율로 좌표를 변환해야 함 | `218b7f5` | 2026-11-20 |  |
+| INPUT-025 | INPUT | 줌 레벨이 같은 오리진에서 유지 | CEF 156.0.31 | ✅ PASS | auto-headless | level after navigating same-origin page=3.80 | `218b7f5` | 2026-11-20 |  |
+| INPUT-026 | INPUT | 키 입력 인코딩 규칙(RAWKEYDOWN 단독은 2회 동작 → 기능 문자 필요, Cmd+방향키 미전달) | CEF 156.0.31 | ℹ️ INFO | auto-headless | 실험(keyexp): RAWKEYDOWN 단독=편집키 2회 동작, +macOS 기능 문자=1회, Space는 +CHAR 필요, Cmd+←/→ 는 어떤 인코딩도 무효 → keys.rs 에 규칙·매핑 반영 | `218b7f5` | 2026-11-20 |  |
+| INPUT-027 | INPUT | 실제 한글 키보드 입력(자모 조합·영한 전환·후보창 위치), 일본어/중국어 IME | CEF | ⬜ TODO | plan:manual |  |  |  | P0 |
+| INPUT-028 | INPUT | 핀치 줌(트랙패드 magnify → ctrl+wheel 또는 zoom level), 한계값, 중심점 | CEF | ⬜ TODO | plan:gui |  |  |  | P0 |
+| INPUT-029 | INPUT | 키보드 줌(Cmd +/−/0), 도메인별 기억 연동 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| INPUT-030 | INPUT | 휠 스크롤 정확도(픽셀/라인, 관성, 가로, 중첩 스크롤), 부드러운 스크롤 | CEF | ⬜ TODO | plan:gui |  |  |  | P0 |
+| INPUT-031 | INPUT | 키 반복·수식키 조합·keydown/up 순서 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| INPUT-032 | INPUT | 호버/mouseleave, 패널 밖으로 나갈 때 leave 이벤트 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| INPUT-033 | INPUT | 중간 버튼/Cmd+클릭(새 탭), 마우스 뒤로/앞으로 버튼 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| INPUT-034 | INPUT | 드래그&드롭(페이지 내, 링크/이미지, 외부 파일 드롭) | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| INPUT-035 | INPUT | 웹뷰↔gpui 입력칸 간 포커스 이동, 창 비활성/활성 시 캐럿·:focus | CEF | ⬜ TODO | plan:gui |  |  |  | P0 |
+| INPUT-036 | INPUT | preventDefault 한 wheel/키가 gpui 단축키와 충돌하지 않음 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| INPUT-037 | INPUT | 이모지/특수문자 입력, 서식 붙여넣기 | CEF | ⬜ TODO | plan:manual |  |  |  | P2 |
+| NAV-001 | NAV | 뒤로/앞으로 이동 | CEF 156.0.31 | ✅ PASS | auto-headless | back→http://127.0.0.1:18080/hist/2 back→http://127.0.0.1:18080/hist/1 fwd×2→http://127.0.0.1:18080/hist/3 | `218b7f5` | 2026-11-20 |  |
+| NAV-002 | NAV | can_go_back / can_go_forward 상태 콜백 | CEF 156.0.31 | ✅ PASS | auto-headless | at /hist/3 back=true fwd=false; at /hist/1 back=true (이전 항목 존재) fwd=true | `218b7f5` | 2026-11-20 |  |
+| NAV-003 | NAV | 새로고침 | CEF 156.0.31 | ✅ PASS | auto-headless | loading events 46→48 | `218b7f5` | 2026-11-20 |  |
+| NAV-004 | NAV | SPA pushState 주소 변경 + 뒤로 | CEF 156.0.31 | ✅ PASS | auto-headless | pushState→http://127.0.0.1:18080/spa/x (title "spa-x") back→http://127.0.0.1:18080/spa | `218b7f5` | 2026-11-20 |  |
+| NAV-005 | NAV | 제목·주소·파비콘 이벤트 | CEF 156.0.31 | ✅ PASS | auto-headless | title="My Titled Page" address=http://127.0.0.1:18080/titled favicon events=1 | `218b7f5` | 2026-11-20 |  |
+| NAV-006 | NAV | 로드 실패(연결 거부) 오류 콜백 | CEF 156.0.31 | ✅ PASS | auto-headless | load errors=["Errorcode(ERR_CONNECTION_REFUSED) ERR_CONNECTION_REFUSED http://127.0.0.1:54329/"] | `218b7f5` | 2026-11-20 |  |
+| NAV-007 | NAV | 페이지 내 찾기(개수, 다음, 대소문자 구분) | CEF 156.0.31 | ✅ PASS | auto-headless | case-insensitive count=6 initial active ordinal=0 (CEF 는 첫 검색에서 0); find-next → 1; case-sensitive count=4 (6 / +1 / 4 expected) | `218b7f5` | 2026-11-20 |  |
+| NAV-008 | NAV | 사용자 제스처 없는 window.open 은 Chromium 이 기본 차단 | CEF 156.0.31 | ✅ PASS | auto-headless | popup opened=false on_before_popup calls=0 (Chromium 이 기본 차단하므로 핸들러까지 오지 않음) | `218b7f5` | 2026-11-20 |  |
+| NAV-009 | NAV | window.open(제스처) features(크기)·opener 유지 | CEF 156.0.31 | ✅ PASS | auto-headless | log=["popup url=http://127.0.0.1:18080/popchild gesture=1 features=400x300"] child saw=Some("OPENER") | `218b7f5` | 2026-11-20 |  |
+| NAV-010 | NAV | noopener 팝업은 opener 없음 | CEF 156.0.31 | ✅ PASS | auto-headless | child saw=Some("NO_OPENER") | `218b7f5` | 2026-11-20 |  |
+| NAV-011 | NAV | 팝업 허용/차단 정책 훅(on_before_popup) | CEF 156.0.31 | ℹ️ INFO | auto-headless | on_before_popup 에서 user_gesture/features/URL 로 허용·차단을 결정할 수 있음(차단 시 1 반환) — 코드 경로 존재, 제스처 있는 차단 시나리오는 미검증 | `218b7f5` | 2026-11-20 |  |
+| NAV-012 | NAV | 탭: 다중 브라우저 생성·전환·닫기, 백그라운드 탭 렌더 중지(was_hidden), 탭별 크기/포커스 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| NAV-013 | NAV | 탭 닫기 시 메모리 해제, 탭 복원 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| NAV-014 | NAV | 외부 프로토콜(mailto:/tel:) → OS 열기 정책 | CEF | ⬜ TODO | plan:headless |  |  |  | P2 |
+| NAV-015 | NAV | 로딩 진행률(on_loading_progress_change) | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| UI-001 | UI | 우클릭 컨텍스트 메뉴를 gpui 가 그림(기본 메뉴 제거) | CEF 151.3.18 | ✅ PASS | auto-gui | ctx=Some((120, 60, "")) | `2b5b01e*` | 2026-11-20 |  |
+| UI-002 | UI | gpui 메뉴 항목('Select all') 동작·메뉴 닫힘 | CEF 151.3.18 | ✅ PASS | auto-gui | selection after gpui menu 'Select all'="select me with context menu" menu_closed=true | `2b5b01e*` | 2026-11-20 |  |
+| UI-003 | UI | JS alert/confirm/prompt 처리 | CEF 156.0.31 | ✅ PASS | auto-headless | page result={"a":"ok","c":true,"p":"spike-input"} handler log=["JsdialogType(JSDIALOGTYPE_ALERT):A", "JsdialogType(JSDIALOGTYPE_CONFIRM):C", "JsdialogType(JSDIALOGTYPE_PROMPT):P"] | `218b7f5` | 2026-11-20 |  |
+| UI-004 | UI | beforeunload 다이얼로그 | CEF 156.0.31 | ✅ PASS | auto-headless | handler log after navigating away=["beforeunload:Is it OK to leave/reload this page?"] | `218b7f5` | 2026-11-20 |  |
+| UI-005 | UI | 다운로드(경로 지정, 완료 콜백, 내용 일치) | CEF 151.3.18 | ✅ PASS | auto-gui | file content="hello download" log=["start spike.txt", "complete 14 bytes"] | `2b5b01e*` | 2026-11-20 |  |
+| UI-006 | UI | 파일 선택 <input type=file>(테스트 고정 경로) | CEF 151.3.18 | ✅ PASS | auto-gui | clicked=true report={"name":"upload-sample.txt","size":10} | `2b5b01e*` | 2026-11-20 |  |
+| UI-007 | UI | 원격 디버깅 엔드포인트(/json/version, /json/list, WS URL) | CEF 156.0.31 | ✅ PASS | auto-headless | version ok=true list has page target=true (port 9222); version head="HTTP/1.1 200 OK\r\nContent-Security-Policy:frame-ancestors 'none'\r\nContent-Length:451\r\nContent-Type:application/json; charset=UTF-8\r\n\r\n{\n   \"Browser\": \"Chrome/156" | `218b7f5` | 2026-11-20 |  |
+| UI-008 | UI | DevTools UI: gpui 패널(두 번째 windowless 브라우저)에 렌더. 참고: 응답의 frontend URL 은 외부 호스팅(chrome-devtools-frontend.appspot.com) | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| UI-009 | UI | 컨텍스트 메뉴 완성(링크/이미지/선택 텍스트/입력칸/페이지 항목별 동작) | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| UI-010 | UI | 이미지 저장/복사, download_image, 진행률·취소·재시도 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| UI-011 | UI | 권한 프롬프트(카메라/마이크/위치/알림/클립보드/화면 공유) | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| UI-012 | UI | HTTP 인증 프롬프트, 인증서 오류 경고/예외, 혼합 콘텐츠 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| UI-013 | UI | 클립보드 API(navigator.clipboard), 이미지 붙여넣기 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| UI-014 | UI | 전체화면 API(비디오/페이지), Esc 해제와 gpui 레이아웃 연동 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| UI-015 | UI | 네이티브 파일 열기/저장 대화상자 연동(현재는 테스트용 고정 경로) | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| UI-016 | UI | 인쇄/PDF 저장, 내장 PDF 뷰어 | CEF | ⬜ TODO | plan:headless |  |  |  | P2 |
+| UI-017 | UI | 접근성(스크린 리더)·키보드만으로 조작 | CEF | ⬜ TODO | plan:manual |  |  |  | P2 |
+| WEB-001 | WEB | 미디어: <video>/<audio> 재생, 자동재생 정책, 코덱(H.264/AAC 지원 여부), 음소거, PiP | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| WEB-002 | WEB | WebSocket, Service Worker, WebGL/WebGPU, WebRTC, 웹폰트 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| WEB-003 | WEB | 한글/이모지 폰트 폴백, 텍스트 렌더링 품질 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| WEB-004 | WEB | User-Agent/언어/프록시 설정, 다운로드 폴더 정책 | CEF | ⬜ TODO | plan:headless |  |  |  | P2 |
+| IPC-001 | IPC | 프로세스 메시지 브리지(window.workspace.invoke) 왕복 지연 | CEF 156.0.31 | ℹ️ INFO | auto-headless | 64B 평균 0.79ms, 1MB 평균 7.0ms(p99 39.8ms). debug 빌드, 순차 요청 | `191dd55*` | 2026-11-20 |  |
+| IPC-002 | IPC | 커스텀 스킴(workspace://) 핸들러 왕복 지연 | CEF 156.0.31 | ℹ️ INFO | auto-headless | 64B 평균 0.21ms, 1MB 평균 1.55ms | `191dd55*` | 2026-11-20 |  |
+| IPC-003 | IPC | 로컬 HTTP 왕복 지연 | CEF 156.0.31 | ℹ️ INFO | auto-headless | 64B 평균 0.71ms, 1MB 평균 1.55ms | `191dd55*` | 2026-11-20 |  |
+| IPC-004 | IPC | Rust → 페이지 푸시(execute_java_script) | CEF 156.0.31 | ℹ️ INFO | auto-headless | 2000회 큐잉 2.7ms, 전부 반영 115ms(호출당 약 58µs) | `191dd55*` | 2026-11-20 |  |
+| IPC-005 | IPC | 브리지는 신뢰 오리진에만 노출(비신뢰 오리진에서는 undefined) | CEF 156.0.31 | ✅ PASS | auto-headless | 127.0.0.1: window.workspace=object, localhost: undefined | `191dd55*` | 2026-11-20 |  |
+| IPC-006 | IPC | 커스텀 스킴/HTTP 는 비신뢰 오리진에서도 접근 가능(오리진 검사 없음) → 핸들러 검사 필요 | CEF 156.0.31 | ❌ FAIL | auto-headless | 의도적으로 검사 없이 구현한 상태에서 비신뢰 오리진 fetch 성공을 확인(위험 확인용) | `191dd55*` | 2026-11-20 |  |
+| IPC-007 | IPC | 업로드 방향/SharedMemoryRegion/ArrayBuffer/동시성, release 빌드 재측정 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| IPC-008 | IPC | 브라우저 프로세스 쪽 프레임/오리진 검증 및 우회 시도 테스트 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| PERF-001 | PERF | 애니메이션 프레임레이트(rAF) | CEF 151.3.18 | ℹ️ INFO | auto-gui | page rAF={"raf":182,"ms":3011}; CEF on_paint=181 in 3.0s (60.2/s); gpui paints=181 (60.2/s) | `2b5b01e*` | 2026-11-20 |  |
+| PERF-002 | PERF | 리사이즈 지연(토글 → 올바른 크기 프레임 도착) | CEF 151.3.18 | ✅ PASS | auto-gui | toggle→correctly-sized frame: avg=32ms max=67ms samples=[22.036584, 23.698666, 55.897458, 16.855666, 16.730999999999998, 66.711958, 16.449917000000003, 16.896125, 66.552209, 17.185916] (측정 실패=-1) | `2b5b01e*` | 2026-11-20 |  |
+| PERF-003 | PERF | 프레임 파이프라인 비용(CPU 복사 + RenderImage) | CEF 151.3.18 | ℹ️ INFO | auto-gui | on_paint callbacks=292 avg copy=1.00ms; gpui paint closures=335 avg RenderImage+paint_image build=2.22ms (GPU upload excluded) | `2b5b01e*` | 2026-11-20 |  |
+| PERF-004 | PERF | 탭 다수(10~30개) 메모리/CPU, 숨긴 탭 프레임 전달 중지 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| PERF-005 | PERF | 프레임 전달: CPU 복사 vs IOSurface 공유 텍스처, 4K/고주사율 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| PERF-006 | PERF | 영상 재생·고해상도 스크롤 프레임 안정성 | CEF | ⬜ TODO | plan:gui |  |  |  | P1 |
+| STAB-001 | STAB | 종료 후 헬퍼 프로세스가 남지 않음 | CEF 156.0.31 | ✅ PASS | auto-headless | 스위트 종료 2초 뒤 spike-cef 프로세스 0개 | `218b7f5` | 2026-11-20 |  |
+| STAB-002 | STAB | 렌더러 크래시 복구(on_render_process_terminated → 다시 로드), 행 처리 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| STAB-003 | STAB | 장시간 구동 메모리 누수, 프레임 버퍼 해제 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| STAB-004 | STAB | 악성/대용량 페이지(무한 루프, 거대 이미지)에서 UI 응답성 | CEF | ⬜ TODO | plan:headless |  |  |  | P1 |
+| STAB-005 | STAB | 번들 덮어쓰기 시 코드서명 캐시 불일치(SIGKILL Code Signature Invalid) 주의 | CEF 156.0.31 | ℹ️ INFO | auto-headless | 번들 삭제 후 재생성 + ad-hoc 재서명으로 해결(스크립트 반영) | `beace55` | 2026-11-20 |  |
+| SEC-001 | SEC | IPC 브리지 오리진 통제(비신뢰 오리진/iframe 호출 불가) | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| SEC-002 | SEC | 스킴 핸들러·로컬 서버 오리진/토큰 검사 | CEF | ⬜ TODO | plan:headless |  |  |  | P0 |
+| PKG-001 | PKG | 번들 크기 | CEF 151.3.18 | ℹ️ INFO | auto-gui | 370MB(CEF 프레임워크 343MB) | `2b5b01e*` | 2026-11-20 |  |
+| PKG-001 | PKG | 번들 크기 | CEF 156.0.31 | ℹ️ INFO | auto-headless | 381MB | `218b7f5` | 2026-11-20 |  |
+| PKG-002 | PKG | 샌드박스 켜기(현재 no_sandbox) | CEF | ⬜ TODO | plan:backlog |  |  |  | P2 |
+| PKG-003 | PKG | 코드서명·공증, 엔타이틀먼트(passkey 포함) | CEF | ⬜ TODO | plan:backlog |  |  |  | P2 |
+| PKG-004 | PKG | Windows/Linux, Intel Mac | CEF | ⬜ TODO | plan:backlog |  |  |  | P2 |
+<!-- RESULTS:END -->
 
-- 드래그&드롭(페이지 간/파일 드롭), 권한 프롬프트, 실제 네이티브 파일 대화상자 연동 — 미구현.
-- 일반 문자는 텍스트 삽입을 IME commit 경로로, keydown/keyup만 별도 전달(keypress 없음). 실제 키보드 한글 입력은 사람이 확인 필요.
-- 프레임 전달은 CPU 복사 경로. 영상 재생, 고해상도/고주사율 환경의 스크롤은 미측정(리사이즈 지연과 애니메이션 60fps는 측정함). IOSurface 공유 텍스처 경로는 gpui의 `paint_surface`가 YCbCr 전용이라 gpui 수정이 필요할 것으로 보이나 시도하지 않았다.
-- 샌드박스 비활성(`no_sandbox`), 코드서명/공증, 번들 구조의 배포 파이프라인 미검증. gpui `GPUIApplication`에 런타임으로 `CefAppProtocol`을 주입(`macapp.rs`) — 동작은 확인했으나 sendEvent 중첩 상태 추적은 단순화됨.
-- Google 실제 계정 로그인(자격증명 입력 이후 흐름), 패스키/WebAuthn, 확장 프로그램은 미검증.
-- 검증은 macOS arm64 단일 환경.
+## 주요 발견·제약
+
+- **Google 로그인 크래시(AUTH-009)**: 증상은 브라우저 프로세스 UI 스레드의 CEF 내부 널 역참조(`SIGSEGV`, 주소 `0x10`). 구글이 Next 직후 보내는 조건부 passkey 요청(`rpId: google.com`, `allowCredentials: []`, `timeout: 600000`) 직후에 발생한다. 시도했지만 효과 없던 것: WebAuthn API 제거, iCloud 키체인 등 feature 비활성, Blink `WebAuth` 비활성, 비밀번호 관리자·자동완성 prefs 비활성, 런타임 스타일 변경(윈도우리스는 항상 Alloy 로 생성됨). CEF 156 업그레이드로만 해결됐다. 로컬 페이지의 모달·조건부 WebAuthn 호출만으로는 151에서도 크래시하지 않는다.
+- **키 입력 인코딩(INPUT)**: `RAWKEYDOWN` 단독은 편집·이동 키가 2번 동작한다. macOS 기능 문자를 함께 보내야 1번 동작하고, Space/Enter는 `CHAR`가 필요하며, Cmd+방향키/Backspace는 OSR에서 전달되지 않아 Home/End 등으로 직접 매핑해야 한다(`crates/spike-cef/src/keys.rs`).
+- **gpui는 보이고 활성화된 창이 있어야 프레임을 그린다.** 화면 밖·거의 투명·비활성 창에서는 레이아웃/입력 핸들러 갱신이 멈춘다. 그래서 GUI 검증은 창이 뜨고 포커스를 가져가며(실행 중 사용자 입력이 섞이면 결과가 오염됨), 가능한 항목은 **창 없는 헤드리스**(`scripts/suite-headless.sh`)로 옮겼다.
+- **헤드리스 테스트 주의**: 읽기 값이 같으면 `document.title` 이 안 바뀌어 타임아웃되므로 호출마다 고유 번호를 붙인다. 블로킹 소켓 읽기 중에는 CEF 메시지 루프가 멈춰 같은 스레드의 DevTools 서버가 응답하지 못한다(별도 스레드에서 요청).
+- **번들 서명**: 번들을 덮어쓰면 macOS 서명 캐시 불일치로 `SIGKILL (Code Signature Invalid)`. 번들 삭제 후 재생성 + ad-hoc 재서명(스크립트 반영).
+- **윈도우리스 팝업**: 사용자 제스처 없는 `window.open`은 Chromium이 기본 차단한다(핸들러까지 안 옴).
+
+## 실행 방법
+
+```bash
+export CEF_PATH=$HOME/.local/share/cef156        # CEF 156 (cef-rs export-cef-dir 로 설치)
+
+scripts/suite-headless.sh all                     # 창/포커스 없음. input | browser | all
+scripts/google-headless.sh <google_id> <횟수>      # 구글 로그인 크래시율(창 없음)
+scripts/verify.sh --yes [--colorful]              # gpui 창 필요(포커스 가져감). 기본은 흰색 UI, 픽셀 검증은 --colorful
+
+# 결과를 표에 반영
+scripts/results.py update --engine cef156 --method auto-headless target/results/cef-headless-all.json
+scripts/results.py render
+```
