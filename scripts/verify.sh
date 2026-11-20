@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 COLOR=(); [[ " $* " == *" --colorful "* ]] && COLOR=(SPIKE_COLORFUL=1)
 [[ "${1:-}" == "--yes" ]] || { echo "창이 뜨고 포커스를 가져갑니다. 실행하려면: scripts/verify.sh --yes [--with-wry] [--colorful]"; echo "  기본은 흰색 UI(픽셀 검증 SKIP). 빨강/파랑/초록으로 z-index 등 픽셀 검증까지 하려면 --colorful"; exit 1; }
-export CEF_PATH="${CEF_PATH:-$HOME/.local/share/cef}"   # CEF 151 minimal 바이너리 위치
+export CEF_PATH="${CEF_PATH:-$HOME/.local/share/cef156}"   # CEF 156 minimal 바이너리 위치 (export-cef-dir 로 받음)
 run() { perl -e 'alarm 180; exec @ARGV' "$@"; }
 
 echo "== B. CEF OSR =="

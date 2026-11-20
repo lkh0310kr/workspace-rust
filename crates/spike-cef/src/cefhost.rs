@@ -497,3 +497,32 @@ pub fn create_main_browser(url: &str) {
     );
     with(|s| s.log.push(format!("browser_host_create_browser -> {r}")));
 }
+
+/// 프로필 prefs 로 비밀번호 관리자/자동완성을 끈다. (passkey 조건부 요청은 이 기능들이 입력칸의 autocomplete=webauthn 을 보고 시작한다)
+/// SPIKE_PREFS=off 일 때 적용. 반드시 UI 스레드에서, 컨텍스트 초기화 이후에 호출.
+pub fn apply_prefs_off() -> Vec<String> {
+    let mut out = vec![];
+    let Some(ctx) = request_context_get_global_context() else {
+        return vec!["no global context".into()];
+    };
+    for name in [
+        "credentials_enable_service",
+        "credentials_enable_autosignin",
+        "profile.password_manager_enabled",
+        "autofill.profile_enabled",
+        "autofill.credit_card_enabled",
+        "autofill.enabled",
+    ] {
+        let n = CefString::from(name);
+        if ctx.has_preference(Some(&n)) != 1 {
+            out.push(format!("{name}: not registered"));
+            continue;
+        }
+        let Some(mut v) = value_create() else { continue };
+        v.set_bool(0);
+        let mut err = CefString::default();
+        let ok = ctx.set_preference(Some(&n), Some(&mut v), Some(&mut err));
+        out.push(format!("{name}: set false -> {ok} {}", err.to_string()));
+    }
+    out
+}

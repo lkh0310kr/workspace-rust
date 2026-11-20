@@ -11,6 +11,6 @@ gpui(Rust) 앱에 브라우저를 임베딩할 때 두 가지 알려진 문제 �
 
 - 검증 체크리스트와 실측 결과, 미검증 항목: [docs/VERIFICATION.md](docs/VERIFICATION.md)
 - 테스트 사이트(두 스파이크 공용): `crates/testsite`
-- 재현: `scripts/verify.sh --yes` (macOS arm64, 창이 뜨고 포커스를 가져감). CEF 151 바이너리(`CEF_PATH`)와 `bundle-cef-app`(cef-rs) 필요.
+- 재현: `scripts/verify.sh --yes` (macOS arm64, 창이 뜨고 포커스를 가져감). CEF 156 바이너리(`CEF_PATH`, cef-rs `export-cef-dir`로 설치)와 `bundle-cef-app`(cef-rs) 필요.
 
 PoC 코드이며 제품 품질이 아니다.

@@ -16,7 +16,7 @@ path = "src/bin/helper.rs"
 helper_name = "spike-cef-helper"
 
 [dependencies]
-cef = "=151.8.1"
+cef = "=156.7.0"
 gpui = "0.2.2"
 raw-window-handle = "0.6"
 serde_json = "1"

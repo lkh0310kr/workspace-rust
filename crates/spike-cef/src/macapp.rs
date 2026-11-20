@@ -30,10 +30,10 @@ fn c(s: &'static [u8]) -> *const c_char {
 }
 
 /// 반환: 주입 결과 설명
-pub unsafe fn patch_application() -> String {
-    let cls = objc_getClass(c(b"GPUIApplication\0"));
+pub unsafe fn patch_application(class_name: &'static [u8]) -> String {
+    let cls = objc_getClass(c(class_name));
     if cls.is_null() {
-        return "GPUIApplication class not found".into();
+        return "application class not found".into();
     }
     let s1 = sel_registerName(c(b"isHandlingSendEvent\0"));
     let s2 = sel_registerName(c(b"setHandlingSendEvent:\0"));

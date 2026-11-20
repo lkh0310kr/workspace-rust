@@ -115,33 +115,33 @@ Z1/Z2는 오버레이가 실제로 그려졌는지 대조군(사이드바 쪽 �
 - **gpui는 실제로 보이고 활성화된 창이 있어야 프레임을 그린다.** 화면 밖 / 거의 투명(alpha 0.03~0.3) / 비활성(Accessory) 창에서는 캡처뿐 아니라 레이아웃·입력 핸들러 갱신까지 멈춘다(App Nap 해제, `isKeyWindow` 오버라이드로도 해결 안 됨). 따라서 GUI 자동 검증은 창이 뜨고 포커스를 가져가며, 실행 중 사용자가 다른 앱을 조작하면 간헐 실패한다(측정: 고정 sleep → 조건 대기로 바꾼 뒤 연속 4회 25/25 통과).
 - 페이지 전환/레이아웃 변경 직후에는 이전 크기의 프레임이 잠깐 보이는 구간이 있다(OSR은 변화 시에만 프레임을 줌).
 
-### Google 로그인 크래시 조사 (진행 중, 원인 미확정)
+### Google 로그인 크래시 — 원인 확정: CEF 151.3.x 버그, CEF 156으로 해결
 
-수동으로 `google` 버튼 → 아이디 → Next 시 앱이 죽음. `scripts/google-repro.sh <id> [추가 인자]`로 자동 재현(입력값 검증 + 간섭 감지 포함).
+증상: `google` → 아이디 → Next 시 앱이 즉시 종료(`SIGSEGV`, 브라우저 프로세스 UI 스레드의 CEF 내부 널 포인터 역참조, 주소 `0x10`, 모든 리포트에서 CEF 오프셋 동일).
 
-확인된 사실:
-- 증상: 메인(UI) 스레드 CEF 내부 널 포인터 역참조(`SIGSEGV`, 주소 `0x10`, `x0=0`). 모든 크래시 리포트에서 CEF 오프셋이 동일(`0x19330e0, 0x65866d0, …`). CEF는 심볼이 제거돼 함수명은 알 수 없음.
-- 대상 계정에는 passkey가 있어 Next 직후 구글이 "Verifying it's you… Complete sign-in using your passkey"를 자동 시작한다(생존한 실행의 스크린샷으로 확인).
-- 크래시 직전 로그 시퀀스(매번 동일): `Touch ID authenticator unavailable (keychain-access-group entitlement missing)` → `Cannot use Bluetooth … no Bluetooth metadata in Info.plist` → USB 보안키(HID) 스캔 → 크래시. 서명 로그: `Unable to derive validation category for current process`.
-- 크래시는 **확률적**이다(같은 조건에서 크래시/생존이 섞임).
+**결론**: CEF 151(바이너리 151.3.18, 크레이트 151.8.1)의 버그이며 **CEF 156.0.31 + `cef` 크레이트 156.7.0에서는 재현되지 않는다.**
 
-시도했고 **해결되지 않은 것**(입력값 검증된 실행 기준):
-- iCloud 키체인 passkey feature 5개 비활성(`--disable-features`, 프로세스 인자로 전달) → 크래시.
-- 추가 WebAuthn UI feature 비활성 → 크래시. `--disable-blink-features=WebAuth` → 크래시.
-- 런타임 스타일 Alloy / Chrome 전환 → 양쪽 모두 크래시와 생존이 섞임(1회 생존은 우연이었음).
-- WebAuthn API 제거(렌더러에서 `PublicKeyCredential`/`navigator.credentials` 삭제) → 1회 크래시(표본 부족, 반복 측정은 중단됨).
+| 조건 (창 없는 헤드리스 재현, 아이디 입력 검증됨) | 크래시 / 생존 |
+|---|---|
+| CEF 151 기본 | **10 / 0** |
+| CEF 151 + WebAuthn API 제거(렌더러에서 `navigator.credentials` 삭제) | **10 / 0** |
+| CEF 151 + iCloud 키체인/passkey 관련 feature 비활성, `--disable-blink-features=WebAuth`, 프로필 prefs(비밀번호 관리자·자동완성) 비활성 시도 | 크래시(각 1~2회, 결정적 재현이라 효과 없음으로 판단) |
+| **CEF 156.0.31 기본** | **0 / 13** (모두 "Complete sign-in using your passkey" 화면 도달 확인) |
 
-원인 후보를 **배제**한 로컬 실험(구글 없이):
-- `localhost`에서 모달 `navigator.credentials.get` 호출: 구글 크래시와 같은 FIDO 로그 시퀀스가 나오지만 크래시 없음.
-- passkey 조건부 중재(`autocomplete="username webauthn"`): 크래시 없음.
-→ 즉 "WebAuthn 호출 자체"만으로는 크래시하지 않으며, 구글의 passkey 단계(등록된 자격 증명으로 allowCredentials를 넘기는 요청 + 이후 UI 경로)에서만 발생한다. passkey 가설은 정황상 유력하지만 **확정되지 않았다**.
+크래시 직전 시퀀스(151): 구글 페이지가 조건부(passkey 자동완성) WebAuthn 요청을 보냄(`rpId: google.com`, `allowCredentials: []`, `timeout: 600000`, PRF 확장) → Chrome FIDO 요청 시작 → Touch ID/Bluetooth 인증기 불가 로그 → USB(HID) 장치 열거 → 크래시. 대상 계정에는 passkey가 있어 Next 직후 구글이 이 흐름을 자동 시작한다.
 
-측정 과정에서 생긴 **무효 결과(거짓 양성/음성)**와 교훈:
-- 아이디 입력이 비어 있는 채 Next가 눌려 "생존"으로 보인 실행(입력값 검증 추가로 해결).
-- 번들 덮어쓰기 후 코드서명 캐시 불일치로 `SIGKILL (Code Signature Invalid)`(번들 삭제 후 재생성 + ad-hoc 서명으로 해결).
-- 실행 중 사용자 키 입력이 창으로 들어가 결과가 오염됨(하니스가 키/조합 입력을 감지하면 해당 실행을 INVALID 처리하도록 추가; 단, 프로세스가 크래시한 실행은 감지 불가).
+원인 분리 과정에서 배제/정정한 것:
+- 로컬 페이지의 모달·조건부 WebAuthn 호출만으로는 151에서도 크래시하지 않는다(구글의 특정 요청 조합에서만 발생).
+- 윈도우리스(OSR) 브라우저는 요청한 런타임 스타일과 무관하게 **항상 Alloy**로 생성된다(`chrome` 요청해도 Alloy). 따라서 Alloy/Chrome 비교 실험은 의미가 없었다.
+- GUI 실행 중 섞여 보이던 "확률적" 생존은 입력 실패/사용자 입력 간섭/번들 서명 불일치가 섞인 측정 오류였다. 창 없는 환경에서는 결정적(10/10)이다.
 
-다음 실험(미실행): 조건별 크래시율(각 n≥10) 비교 — 기본 / WebAuthn API 제거 / 보안키(HID) 비활성 / Info.plist에 Bluetooth 권한 문구 추가 + 키체인 엔타이틀먼트 서명. Electron 쪽은 passkey를 어떻게 다루는지(`ref-proj`, 기존 앱) 확인 필요.
+**제약/남은 것**:
+- CEF 156에서도 이 앱은 Touch ID(keychain 엔타이틀먼트)와 Bluetooth(Info.plist 권한 문구)를 쓸 수 없어 **passkey 인증 자체는 완료되지 않는다**("Try another way"로 비밀번호/다른 방법 필요). 코드서명 + 엔타이틀먼트 설계는 별도 과제.
+- 비밀번호/2단계 인증을 통한 로그인 완주, 로그인 후 세션 유지는 아직 미검증.
+- 151.3.24(크레이트와 정확히 일치하는 바이너리)에서의 동작은 따로 확인하지 않음(151 계열 전체가 영향인지는 미확인).
+- CEF 156으로 올린 뒤 전체 GUI 회귀(`scripts/verify.sh --yes --colorful`)는 아직 실행하지 않음.
+
+재현/측정 도구: `scripts/google-headless.sh <id> <횟수>`(창·포커스 없음, 프레임은 `target/shots/headless-*.png`로 저장).
 
 ### 미검증 / 알려진 공백 (통과로 주장하지 않음)
 

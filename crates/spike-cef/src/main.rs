@@ -2,6 +2,7 @@
 //! 웹 콘텐츠는 gpui 씬 안의 "이미지 한 장"으로 그려지므로 z-order/클립/오버레이는 gpui 규칙을 그대로 따른다.
 
 mod autotest;
+mod headless;
 mod cefhost;
 mod macapp;
 mod native;
@@ -494,7 +495,13 @@ fn main() {
         std::process::exit(ret.max(0));
     }
 
-    let patched = unsafe { macapp::patch_application() };
+    // 창 없는(헤드리스) 재현 모드: gpui 를 띄우지 않는다 (사용자 작업 방해 없음)
+    if std::env::var("SPIKE_HEADLESS").is_ok() {
+        headless::run(&args, &mut app);
+        return;
+    }
+
+    let patched = unsafe { macapp::patch_application(b"GPUIApplication\0") };
     println!("macapp: {patched}");
 
     let autotest = std::env::var("SPIKE_AUTOTEST").is_ok();
