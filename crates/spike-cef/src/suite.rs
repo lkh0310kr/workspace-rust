@@ -760,6 +760,7 @@ fn suite_more(r: &mut Rs, reports: &testsite::Reports) {
     let insp = http_get(9222, "/devtools/inspector.html").unwrap_or_default();
     let status = insp.lines().next().unwrap_or("").to_string();
     r.add("D1.devtools_frontend_assets_served_locally", Some(status.contains("200")), format!("GET /devtools/inspector.html → {status:?} (404 면 최소 CEF 번들에 DevTools UI 리소스가 없음)"));
+    with(|s| s.load_errors.clear()); // 앞선 B12b 의 의도적 연결 거부 오류가 섞이지 않게
     cefhost::create_tab(&format!("http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/{page_id}"), None);
     wait_for(15, || with(|s| s.tabs.len() == 1));
     pump(4000);
