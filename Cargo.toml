@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/testsite", "crates/spike-wry", "crates/spike-cef"]
+exclude = ["ref"]
+
+[workspace.package]
+edition = "2021"
+publish = false

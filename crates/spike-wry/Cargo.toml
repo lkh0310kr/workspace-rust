@@ -1,0 +1,17 @@
+[package]
+name = "spike-wry"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = "0.2.2"
+wry = "0.57"
+raw-window-handle = "0.6"
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+testsite = { path = "../testsite" }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSWindow", "NSView", "NSResponder", "NSScreen", "NSGraphics"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString", "NSArray"] }
+core-graphics = "0.24"

@@ -1,0 +1,29 @@
+[package]
+name = "spike-cef"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "spike-cef"
+path = "src/main.rs"
+
+[[bin]]
+name = "spike-cef-helper"
+path = "src/bin/helper.rs"
+
+[package.metadata.cef.bundle]
+helper_name = "spike-cef-helper"
+
+[dependencies]
+cef = "=151.8.1"
+gpui = "0.2.2"
+raw-window-handle = "0.6"
+serde_json = "1"
+smallvec = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+testsite = { path = "../testsite" }
+core-graphics = "0.24"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSEvent", "NSWindow", "NSView", "NSResponder", "NSScreen", "NSGraphics", "NSApplication"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString", "NSArray", "NSRange"] }
