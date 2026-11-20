@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Radial Focus Tree</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#ffffff;--ink:#171a20;--mut:#5c5e62;--acc:#3e6ae1;--rim:#e3e4e6;color-scheme:light;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101113;--ink:#f4f4f4;--mut:#8d9096;--acc:#3e6ae1;--rim:#26282c;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101113;--ink:#f4f4f4;--mut:#8d9096;--acc:#3e6ae1;--rim:#26282c;color-scheme:dark}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{height:100%;margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
+font-family:"Montserrat","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;letter-spacing:.01em}
+#app{position:relative;height:100%}
+svg{width:100%;height:100%;display:block;touch-action:none;user-select:none;-webkit-user-select:none}
+text{fill:var(--ink);paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round;font-weight:500}
+.rim{fill:none;stroke:var(--rim);stroke-width:1}
+.link{stroke:var(--mut);stroke-width:.75}
+.stop{fill:none;stroke:var(--mut);stroke-width:1.5;stroke-linecap:round;transition:stroke .25s}
+.node{cursor:pointer;outline:none}
+.node circle{fill:var(--bg);stroke:var(--ink);stroke-width:1.5}
+.node.hk circle{fill:var(--ink)}
+.node.g circle{stroke:var(--mut);stroke-width:1.5}
+.node.g.hk circle{fill:var(--mut)}
+.node.g .t1{fill:var(--mut);font-weight:400}
+.node.c circle{fill:var(--acc);stroke:var(--acc)}
+.node.c{cursor:pointer}
+svg .node circle.pt{fill:none;stroke:var(--rim);stroke-width:2}
+svg .node circle.pr{fill:none;stroke:var(--acc);stroke-width:2.5;stroke-linecap:round}
+svg[data-root="true"] .node.c{cursor:default}
+.node:not(.c):hover circle,.node:focus-visible circle{fill:var(--acc);stroke:var(--acc)}
+.node:focus-visible .t1{text-decoration:underline}
+.bar{position:absolute;left:0;right:0;top:env(safe-area-inset-top,0px);display:flex;align-items:center;gap:12px;padding:14px 18px;pointer-events:none}
+.bar>*{pointer-events:auto}
+button{font:inherit;color:var(--mut);background:none;border:0;border-radius:6px;padding:6px 8px;cursor:pointer;white-space:nowrap}
+button:not(:disabled):hover{color:var(--ink)}
+button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.crumbs{display:flex;align-items:center;font-size:13px;font-weight:500;min-width:0;max-width:100%;margin-left:-8px}
+.crumbs>*{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumbs button{font-weight:400;max-width:9em;flex:0 1 auto}
+.crumbs span{padding:6px 8px;color:var(--ink);flex:0 1 auto}
+.crumbs i{font-style:normal;color:var(--mut);opacity:.5;flex:none;padding:0 1px}
+.hint{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);text-align:center;font-size:13px;color:var(--mut);padding:0 16px;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="app">
+  <svg id="s" role="tree" aria-label="Radial focus tree">
+    <path class="rim" id="r1"/><path class="rim" id="r2"/><path class="stop" id="sS"/><path class="stop" id="sE"/>
+    <g id="links"></g><g id="nodes"></g>
+  </svg>
+  <div class="bar"><div class="crumbs" id="crumbs" role="navigation" aria-label="경로"></div></div>
+  <div class="hint">노드 클릭: 이동 · 중앙 노드 클릭: 뒤로 · 링에서 스크롤·드래그: 회전</div>
+</div>
+<script>
+const DATA=["Tech Atlas",
+["언어","JavaScript","TypeScript","Python","Rust","Go","Java","Kotlin","Swift","C++","C#","Ruby","PHP","Dart","Elixir","Scala","Haskell","Clojure","Lua","Perl","R","Julia","Zig","OCaml","F#","Objective-C","Groovy","Erlang","Nim"],
+["프론트엔드",["React","Next.js","Remix","Gatsby","React Native"],["Vue","Nuxt","Pinia","Vuetify"],["Svelte","SvelteKit","Runes"],"Angular","Solid","Astro","Preact","Lit","Qwik","Ember","Alpine.js",["Vite","Rollup","esbuild","Vitest"],"Webpack",["Tailwind","JIT","Plugins"],"Storybook","Three.js"],
+["백엔드",["Node.js","Express","Fastify","NestJS","Koa"],["Python 웹","Django","FastAPI","Flask"],["Java 웹","Spring","Quarkus","Micronaut"],"Rails","Phoenix","Laravel","ASP.NET","Gin","Actix","Hono","Deno","Bun",["API","gRPC","GraphQL","tRPC","REST"],"Axum","Ktor"],
+["데이터",["PostgreSQL","pgvector","PostGIS","Citus"],"MySQL","Redis","MongoDB","Kafka","ClickHouse","SQLite","Cassandra","DynamoDB","Elasticsearch","Neo4j","Snowflake","BigQuery",["Spark","PySpark","MLlib"],["Airflow","DAG","Operator"],"dbt","RabbitMQ","Flink"],
+["인프라",["컨테이너","Docker","Podman","containerd"],["오케스트레이션","Kubernetes","Nomad","Helm"],["클라우드","AWS","GCP","Azure","Oracle"],"Terraform","Nginx","Ansible","Prometheus","Grafana","Jenkins","GitHub Actions","ArgoCD","Istio","Cloudflare","Vault","Pulumi"],
+["AI",["머신러닝","PyTorch","TensorFlow","JAX","scikit-learn"],["LLM","Transformer","RAG","Agent","Fine-tuning","RLHF"],"Vision","Speech","NLP","강화학습","Diffusion","임베딩","벡터 DB","프롬프트","MLOps","평가","데이터셋","추론 최적화","Multimodal"],
+["디자인",["Figma","Auto layout","Variables","Plugins"],"타이포그래피","컬러","모션","와이어프레임","프로토타입","그리드","아이콘",["디자인 시스템","토큰","컴포넌트","문서화"],"접근성","UX 리서치","일러스트","3D","브랜딩","인터랙션"]];
+const N=[];
+function mk(d,p){const n={id:N.length,p,k:[],name:typeof d==="string"?d:d[0]};N.push(n);
+  if(typeof d!=="string")for(const c of d.slice(1))n.k.push(mk(c,n));return n}
+const root=mk(DATA,null);
+const NS="http://www.w3.org/2000/svg",svg=document.getElementById("s"),
+  layer=document.getElementById("nodes"),linkL=document.getElementById("links"),
+  crumbEl=document.getElementById("crumbs");
+const VIS=10,STEP=30,D2R=Math.PI/180,MAXG=5,THUMB=60,DUR=800,GAP=5;
+let transStart=0,bump=0,bv=0,bumpDir=1,ringKey="",kickOK=true,wevt=0;
+function drawRings(on){const key=on+","+R1+","+R2+","+cx+","+cy;if(key===ringKey)return;ringKey=key;
+  const pt=(R,a)=>(cx+R*Math.cos(a*D2R))+","+(cy+R*Math.sin(a*D2R)),a0=-90+GAP,a1=270-GAP;
+  const arc=R=>on?"M"+pt(R,a0)+"A"+R+","+R+" 0 1 1 "+pt(R,a1):"M"+(cx+R)+","+cy+"A"+R+","+R+" 0 1 1 "+(cx-R)+","+cy+"A"+R+","+R+" 0 1 1 "+(cx+R)+","+cy;
+  const stop=a=>on?[R1,R2].map(R=>"M"+pt(R-6,a)+"L"+pt(R+6,a)).join(""):"";
+  document.getElementById("r1").setAttribute("d",arc(R1));document.getElementById("r2").setAttribute("d",arc(R2));
+  document.getElementById("sS").setAttribute("d",stop(a0));document.getElementById("sE").setAttribute("d",stop(a1))}
+function beginTrans(){rotT=rotC=0;bump=bv=0;trans=true;transStart=performance.now();transUntil=transStart+DUR;
+  for(const id in cur){const c=cur[id];c.fx=c.x;c.fy=c.y;c.fo=c.o;c.fr=c.r}}
+let stack=[root],rotT=0,rotC=0,dragging=false,W,H,cx,cy,R1,R2,T={},cur={},E={},links=[],raf=0,pool=[],trans=true,transUntil=0,last=0;
+const mc=document.createElement("canvas").getContext("2d");
+function fit(s,w,fs,wt){mc.font=(wt||500)+" "+fs+"px Montserrat,'Apple SD Gothic Neo',sans-serif";if(w<24)return"";
+  if(mc.measureText(s).width<=w)return s;
+  while(s.length>1&&mc.measureText(s+"…").width>w)s=s.slice(0,-1);return s+"…"}
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),mod=(a,n)=>((a%n)+n)%n,foc=()=>stack[stack.length-1];
+
+function geom(){W=svg.clientWidth;H=svg.clientHeight;cx=W/2;cy=H*.54;
+  const v=Math.min(cy-66,H-cy-26);
+  R2=Math.min(W/2-(W>700?120:22),v);R1=R2*.56;
+  ringKey="";
+  for(const id in E)E[id].mode=null}
+
+function compute(){const f=foc(),n=f.k.length;T={};links=[];
+  T[f.id]={x:cx,y:cy,o:1,r:14,role:"c"};
+  const vis=Math.min(n,VIS),sp=n<=VIS?360/n:STEP;
+  f.k.forEach((k,i)=>{const p=n<=VIS?i:i-(rotC+bump);if(p>=vis||p<=-1)return;
+    const o=n<=VIS?1:clamp(Math.min(p+1,vis-p),0,1);if(o<=0)return;
+    const th=n<=VIS?-90+(p+.5)*sp:-90+(360-(VIS-1)*STEP)/2+p*sp,a=th*D2R;
+    T[k.id]={x:cx+R1*Math.cos(a),y:cy+R1*Math.sin(a),o,r:7,role:"k",th};links.push([f.id,k.id]);
+    const gs=k.k.slice(0,MAXG),m=gs.length,gst=Math.min(11,sp*.8/Math.max(m,2));
+    gs.forEach((g,j)=>{const ph=th+(j-(m-1)/2)*gst,b=ph*D2R;
+      T[g.id]={x:cx+R2*Math.cos(b),y:cy+R2*Math.sin(b),o:o*.9,r:3.5,role:"g",th:ph};links.push([k.id,g.id])})})}
+
+function sync(){
+  for(const id in T){const c=cur[id];
+    if(c){if(c.gone){c.gone=false;c.ex=null}continue}
+    const nd=N[id],t=T[id];let x=t.x,y=t.y,r=t.r;
+    if(trans){const pp=nd.p&&(cur[nd.p.id]||T[nd.p.id]);x=pp?pp.x:cx;y=pp?pp.y:cy;r=3}
+    cur[id]={x,y,o:0,r,la:1,gone:false,ex:null,role:t.role,fx:trans?x:null,fy:y,fo:0,fr:r};getEl(nd)}
+  for(const id in cur){const c=cur[id];
+    if(!T[id]&&!c.gone){c.gone=true;if(trans)c.ex={x:cx+(c.x-cx)*.5,y:cy+(c.y-cy)*.5}}}
+  trans=false}
+
+function crumbs(){crumbEl.textContent="";
+  stack.forEach((n,i)=>{const last=i===stack.length-1;
+    if(i){const s=document.createElement("i");s.textContent="›";s.setAttribute("aria-hidden","true");crumbEl.append(s)}
+    const b=document.createElement(last?"span":"button");b.textContent=n.name;b.title=n.name;if(last)b.setAttribute("aria-current","page");
+    if(!last)b.onclick=()=>go(n);crumbEl.append(b)})}
+
+function getEl(n){if(E[n.id])return E[n.id];
+  const g=document.createElementNS(NS,"g"),c=document.createElementNS(NS,"circle"),
+    t1=document.createElementNS(NS,"text"),ti=document.createElementNS(NS,"title");
+  t1.setAttribute("class","t1");ti.textContent=n.name+(n.k.length?" ("+n.k.length+")":"");
+  const pt=document.createElementNS(NS,"circle"),pr=document.createElementNS(NS,"circle");
+  pt.setAttribute("class","pt");pr.setAttribute("class","pr");pr.setAttribute("transform","rotate(-90) scale(1,-1)");
+  pt.style.display=pr.style.display="none";g.append(ti,c,pt,pr,t1);g.setAttribute("tabindex","0");g.setAttribute("role","treeitem");g.setAttribute("aria-label",n.name);
+  g.addEventListener("click",()=>{if(!moved)go(n)});
+  g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go(n)}});
+  layer.appendChild(g);return E[n.id]={g,c,t1,pt,pr,mode:null}}
+
+function modeOf(t){if(t.role==="c")return"c";
+  const co=Math.cos(t.th*D2R),sn=Math.sin(t.th*D2R),d=co>0?1:-1;
+  if(t.role==="k")return Math.abs(co)>.3?"k"+d:"km"+(sn<0?"u":"d");
+  return Math.abs(co)>.5?"g"+d:"g0"}
+function place(t1,x,anchor,y,fs,txt){t1.setAttribute("x",x);t1.setAttribute("y",y);
+  t1.setAttribute("text-anchor",anchor);t1.setAttribute("font-size",fs);t1.textContent=txt}
+function paint(n,t,e,m){const t1=e.t1,d=m.endsWith("-1")||m==="g-1"||m==="k-1"?-1:1;
+  e.g.setAttribute("class","node "+t.role+(n.k.length?" hk":""));
+  if(m==="c")place(t1,0,"middle",48,22,fit(n.name,R1*1.7,22,500));
+  else if(m[0]==="k"&&m[1]!=="m")place(t1,d*14,d>0?"start":"end",5,14,fit(n.name,Math.max(60,R2-R1-28),14));
+  else if(m[0]==="k")place(t1,0,"middle",m[2]==="u"?-14:26,14,fit(n.name,110,14));
+  else if(m==="g0")t1.textContent="";
+  else{const x=cx+R2*Math.cos(t.th*D2R);place(t1,d*9,d>0?"start":"end",4,11,fit(n.name,(d>0?W-x:x)-20,11,400))}}
+
+function afterNav(){svg.dataset.root=stack.length<2;crumbs();run()}
+function go(n){const f=foc();if(n===f){back();return}
+  const i=stack.indexOf(n);
+  if(i>=0)stack=stack.slice(0,i+1);
+  else{const ch=[];let x=n;while(x&&x!==f){ch.unshift(x);x=x.p}if(x!==f)return;stack.push(...ch)}
+  beginTrans();afterNav()}
+function back(){if(stack.length>1){stack.pop();beginTrans();afterNav()}}
+
+function run(){if(!raf)raf=requestAnimationFrame(tick)}
+function tick(now){raf=0;const dt=Math.min(50,now-(last||now-16));last=now;let busy=now<transUntil;
+  rotC+=(rotT-rotC)*(1-Math.exp(-dt/105));if(Math.abs(rotT-rotC)>.002)busy=true;else rotC=rotT;
+  if(bump||bv){const s=Math.min(dt,32)/1000;bv+=(-260*bump-26*bv)*s;bump+=bv*s;
+    if(Math.abs(bump)<.002&&Math.abs(bv)<.02){bump=0;bv=0}else busy=true}
+  compute();sync();
+  const nn=foc().k.length;drawRings(false);
+  const inT=now<transUntil,ue=1-Math.pow(1-clamp((now-transStart)/DUR,0,1),3),kn=1-Math.exp(-dt/70),kl=1-Math.exp(-dt/140);
+  for(const id in cur){const c=cur[id],t=T[id],e=E[id];
+    if(t){if(c.role!==t.role){c.role=t.role;c.la=c.o>.05?0:1}
+      const m=modeOf(t);if(e.mode!==m){e.mode=m;paint(N[id],t,e,m)}}
+    const tx=t?t.x:(c.ex?c.ex.x:c.x),ty=t?t.y:(c.ex?c.ex.y:c.y),to=t?t.o:0,tr=t?t.r:(c.ex?3:c.r);
+    if(inT&&c.fx!=null&&(t||c.ex)){c.x=c.fx+(tx-c.fx)*ue;c.y=c.fy+(ty-c.fy)*ue;c.o=c.fo+(to-c.fo)*ue;c.r=c.fr+(tr-c.fr)*ue}
+    else{const kk=t?1:kn;c.x+=(tx-c.x)*kk;c.y+=(ty-c.y)*kk;c.o+=(to-c.o)*kk;c.r+=(tr-c.r)*kk}
+    c.la+=(1-c.la)*kl;
+    if(Math.abs(tx-c.x)>.3||Math.abs(ty-c.y)>.3||Math.abs(to-c.o)>.01||Math.abs(tr-c.r)>.05||c.la<.99)busy=true;
+    e.g.setAttribute("transform",`translate(${c.x},${c.y})`);e.c.setAttribute("r",c.r);
+    if(t&&t.role==="c"&&nn>VIS){const rr=c.r+6,C=2*Math.PI*rr,f=clamp(rotC/(nn-VIS),0,1);
+      e.pt.setAttribute("r",rr);e.pr.setAttribute("r",rr);e.pt.style.display=e.pr.style.display="";
+      const l=THUMB/360*C;e.pr.setAttribute("stroke-dasharray",l+" "+(C-l));
+      e.pr.setAttribute("stroke-dashoffset",-(f-THUMB/720)*C)}
+    else e.pt.style.display=e.pr.style.display="none";
+    e.g.style.opacity=c.o;e.t1.style.opacity=c.la;e.g.style.pointerEvents=t&&t.o>.5?"auto":"none";
+    e.g.setAttribute("tabindex",t?"0":"-1");
+    if(!t&&c.o<.02){e.g.remove();delete E[id];delete cur[id]}}
+  links.forEach((l,i)=>{const a=cur[l[0]],b=cur[l[1]];if(!a||!b)return;
+    let ln=pool[i];if(!ln){ln=pool[i]=document.createElementNS(NS,"line");ln.setAttribute("class","link");linkL.appendChild(ln)}
+    ln.setAttribute("x1",a.x);ln.setAttribute("y1",a.y);ln.setAttribute("x2",b.x);ln.setAttribute("y2",b.y);
+    ln.style.opacity=.4*Math.min(a.o,b.o);ln.style.display=""});
+  for(let i=links.length;i<pool.length;i++)pool[i].style.display="none";
+  if(busy)raf=requestAnimationFrame(tick)}
+
+let moved=false,drag=null,snapT=0;
+const pt=e=>{const r=svg.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top]};
+const ang=(x,y)=>Math.atan2(y-cy,x-cx)*180/Math.PI,inRing=(x,y)=>Math.hypot(x-cx,y-cy)>=R1*.7&&foc().k.length>1;
+const spN=()=>{const n=foc().k.length;return n<=VIS?360/Math.max(n,1):STEP};
+svg.addEventListener("pointerdown",e=>{moved=false;const [x,y]=pt(e);
+  drag={x,y,ring:inRing(x,y),la:ang(x,y),acc:0,rot:rotT}});
+addEventListener("pointermove",e=>{if(!drag)return;const [x,y]=pt(e);
+  if(Math.hypot(x-drag.x,y-drag.y)>4)moved=true;
+  if(drag.ring&&moved){const a=ang(x,y);let d=a-drag.la;d=((d+540)%360)-180;drag.acc+=d;drag.la=a;
+    const nn=foc().k.length,raw=drag.rot-1.8*drag.acc/spN(),mx=Math.max(0,nn-VIS);rotT=clamp(Math.round(raw),0,mx);
+    if(nn>VIS){if(!drag.k&&(raw<-.35||raw>mx+.35)){drag.k=true;kick(raw<0?-1:1)}else if(raw>=-.2&&raw<=mx+.2)drag.k=false}run()}});
+addEventListener("pointerup",()=>{
+  drag=null;setTimeout(()=>moved=false,0);run()});
+function stepDial(d){const n=foc().k.length;if(n<=VIS)return;
+  const nt=clamp(Math.round(rotT)+d,0,n-VIS);if(nt===Math.round(rotT)){if(kickOK){kick(d);kickOK=false}return}
+  if(Math.abs(nt-Math.round(rotC))<=4){rotT=nt;run()}}
+function kick(d){bv=d*5;bumpDir=d;run()}
+let wacc=0,wlast=0,wt=0;
+svg.addEventListener("wheel",e=>{e.preventDefault();const [x,y]=pt(e);if(!inRing(x,y))return;
+  const now=performance.now();if(now-wevt>250)kickOK=true;wevt=now;clearTimeout(wt);wt=setTimeout(()=>wacc=0,200);
+  if(now-wlast<45){wacc=0;return}
+  wacc+=e.deltaY;if(Math.abs(wacc)>=18){stepDial(wacc>0?1:-1);wacc=0;wlast=now}},{passive:false});
+addEventListener("keydown",e=>{
+  {const t=performance.now();if(t-wevt>250)kickOK=true;wevt=t}
+  if(e.key==="Escape"||e.key==="Backspace"){e.preventDefault();back()}
+  else if(e.key==="ArrowDown"||e.key==="ArrowRight"){e.preventDefault();stepDial(1)}
+  else if(e.key==="ArrowUp"||e.key==="ArrowLeft"){e.preventDefault();stepDial(-1)}});
+
+addEventListener("resize",()=>{geom();run()});
+geom();beginTrans();afterNav();
+</script>
+</body>
+</html>
