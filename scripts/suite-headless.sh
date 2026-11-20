@@ -11,7 +11,7 @@ if [[ ! -x "$BIN" || -n "$(find crates -newer "$BIN" -name '*.rs' | head -1)" ]]
 fi
 codesign --verify --deep --strict target/bundle/spike-cef.app 2>/dev/null || codesign --force --deep -s - target/bundle/spike-cef.app
 rm -f ~/Library/Logs/spike-cef/*.log
-SPIKE_HEADLESS=1 SPIKE_SUITE="$W" perl -e 'alarm 600; exec @ARGV' "$BIN" > target/suite-$W.log 2>&1
+SPIKE_HEADLESS=1 SPIKE_SUITE="$W" perl -e 'alarm 600; exec @ARGV' "$BIN" "${@:2}" > target/suite-$W.log 2>&1
 echo "exit=$?"
 grep -E "^RESULT|^SUITE" target/suite-$W.log | cut -c1-400
 sleep 2

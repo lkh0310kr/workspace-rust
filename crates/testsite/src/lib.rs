@@ -29,6 +29,7 @@ struct Req {
     path: String,
     query: String,
     cookies: String,
+    auth: String,
     body: String,
 }
 
@@ -43,7 +44,7 @@ fn handle(mut s: TcpStream, reports: Reports) -> std::io::Result<()> {
         Some((p, q)) => (p.to_string(), q.to_string()),
         None => (target.clone(), String::new()),
     };
-    let (mut clen, mut cookies) = (0usize, String::new());
+    let (mut clen, mut cookies, mut auth) = (0usize, String::new(), String::new());
     loop {
         let mut h = String::new();
         rd.read_line(&mut h)?;
@@ -58,6 +59,9 @@ fn handle(mut s: TcpStream, reports: Reports) -> std::io::Result<()> {
         if low.starts_with("cookie:") {
             cookies = h[7..].trim().to_string();
         }
+        if low.starts_with("authorization:") {
+            auth = h[14..].trim().to_string();
+        }
     }
     let mut body = vec![0u8; clen];
     rd.read_exact(&mut body)?;
@@ -66,11 +70,14 @@ fn handle(mut s: TcpStream, reports: Reports) -> std::io::Result<()> {
         path,
         query,
         cookies,
+        auth,
         body: String::from_utf8_lossy(&body).into_owned(),
     };
     let (status, headers, html) = route(&req, &reports);
+    let custom_ct = headers.iter().any(|h| h.to_ascii_lowercase().starts_with("content-type:"));
     let mut out = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n",
+        "HTTP/1.1 {status}\r\n{}Content-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n",
+        if custom_ct { "" } else { "Content-Type: text/html; charset=utf-8\r\n" },
         html.len()
     );
     for h in headers {
@@ -351,10 +358,13 @@ __report('ipcbench',out)})()</script>"),
             if let Some(a) = q(&r.query, "attrs") { ck.push_str(&format!("; {}", a.replace('+', " "))); }
             ("200 OK", vec![ck], page("setcookie", "<p>cookie set</p>"))
         }
-        ("GET", "/cookies") => (
-            "200 OK", vec![],
-            page("cookies", &format!("<pre id=r>{}</pre>", r.cookies)),
-        ),
+        ("GET", "/cookies") => {
+            let tag = q(&r.query, "tag").unwrap_or("x".into());
+            (
+                "200 OK", vec![],
+                page("cookies", &format!("<pre id=r>{c}</pre><script>__report('cookies_{tag}',{c:?})</script>", c = r.cookies)),
+            )
+        }
         ("GET", "/dialogs") => (
             "200 OK", vec![],
             page("dialogs", "<p>dialogs</p>"),
@@ -374,6 +384,54 @@ __report('ipcbench',out)})()</script>"),
         ("GET", "/zoom") => (
             "200 OK", vec![],
             page("zoom", "<style>body{margin:0}</style><div id=b style='width:100px;height:50px;background:#ddd'></div><button id=btn onclick=\"__report('zclick','1')\" style='margin:20px;width:140px;height:40px;font-size:18px'>zoom me</button>"),
+        ),
+        // ================= 추가 검증 페이지 =================
+        ("GET", "/tabpage") => {
+            let name = q(&r.query, "name").unwrap_or("t".into());
+            (
+                "200 OK", vec![],
+                page(&format!("tab {name}"), &format!("<h2>tab {name}</h2><script>__report('tab_{name}',location.href)</script>")),
+            )
+        }
+        ("GET", "/anim2") => (
+            "200 OK", vec![],
+            page("anim2", "<style>html,body{margin:0;height:100%}</style><script>function f(t){document.body.style.background='hsl('+(t/5%360)+',60%,70%)';requestAnimationFrame(f)}requestAnimationFrame(f)</script>"),
+        ),
+        ("GET", "/hover") => (
+            "200 OK", vec![],
+            page("hover", "<div id=box style='width:200px;height:100px;background:#eee;margin:40px'>hover</div><script>window.__h={enter:0,leave:0,docleave:0};const b=document.getElementById('box');b.addEventListener('mouseenter',()=>__h.enter++);b.addEventListener('mouseleave',()=>__h.leave++);document.documentElement.addEventListener('mouseleave',()=>__h.docleave++);window.__k=[];addEventListener('keydown',e=>__k.push(e.repeat?'R':'d'))</script>"),
+        ),
+        ("GET", "/auth") => {
+            if r.auth.starts_with("Basic ") {
+                ("200 OK", vec![], page("auth", &format!("<pre id=r>AUTH_OK {}</pre><script>__report('auth_ok',{:?})</script>", r.auth, r.auth)))
+            } else {
+                ("401 Unauthorized", vec!["WWW-Authenticate: Basic realm=\"spike\"".into()], "unauthorized".into())
+            }
+        }
+        ("GET", "/sw.js") => (
+            "200 OK",
+            vec!["Content-Type: application/javascript".into()],
+            "self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));".into(),
+        ),
+        ("GET", "/clip") => (
+            "200 OK", vec![],
+            page("clip", "<button id=b onclick=\"navigator.clipboard.writeText('spike-clip-ok').then(()=>__report('clip_write','OK'),e=>__report('clip_write','ERR '+e.name))\" style='font-size:22px'>copy</button>"),
+        ),
+        ("GET", "/web") => (
+            "200 OK", vec![],
+            page("web", r#"<canvas id=c width=16 height=16></canvas><script>(async()=>{const o={};
+const ct=(t)=>{const v=document.createElement('video');return v.canPlayType(t)||'no'};
+o.codecs={h264:ct('video/mp4; codecs="avc1.42E01E"'),vp9:ct('video/webm; codecs="vp9"'),av1:ct('video/mp4; codecs="av01.0.05M.08"'),aac:ct('audio/mp4; codecs="mp4a.40.2"'),mp3:ct('audio/mpeg'),opus:ct('audio/webm; codecs="opus"')};
+try{const gl=document.getElementById('c').getContext('webgl2');o.webgl2=!!gl;o.renderer=gl?gl.getParameter(gl.RENDERER):null}catch(e){o.webgl2='ERR '+e.name}
+o.webgpu=typeof navigator.gpu;
+try{localStorage.setItem('spike','v1');o.ls=localStorage.getItem('spike')}catch(e){o.ls='ERR '+e.name}
+try{o.idb=await new Promise((res,rej)=>{const r=indexedDB.open('spike',1);r.onupgradeneeded=()=>r.result.createObjectStore('s');r.onsuccess=()=>{const db=r.result;const t=db.transaction('s','readwrite');t.objectStore('s').put('v2','k');t.oncomplete=()=>{const g=db.transaction('s').objectStore('s').get('k');g.onsuccess=()=>res(g.result)};};r.onerror=()=>rej(r.error)})}catch(e){o.idb='ERR '+e}
+try{const reg=await navigator.serviceWorker.register('/sw.js');o.sw='registered';await navigator.serviceWorker.ready;o.sw='active'}catch(e){o.sw='ERR '+e.name}
+try{const pc=new RTCPeerConnection();const off=await pc.createOffer({offerToReceiveAudio:true});o.rtc=off.type;pc.close()}catch(e){o.rtc='ERR '+e.name}
+window.__audio=async()=>{const o2={};try{const sr=8000,n=sr;const b=new ArrayBuffer(44+n*2);const dv=new DataView(b);const w=(i,s)=>{for(let k=0;k<s.length;k++)dv.setUint8(i+k,s.charCodeAt(k))};w(0,'RIFF');dv.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);w(36,'data');dv.setUint32(40,n*2,true);for(let i=0;i<n;i++)dv.setInt16(44+i*2,Math.sin(i/10)*3000,true);
+const a=new Audio(URL.createObjectURL(new Blob([b],{type:'audio/wav'})));a.muted=true;const p=a.play().then(()=>'resolved',e=>'rejected '+e.name);o2.play=await Promise.race([p,new Promise(r=>setTimeout(()=>r('pending'),1500))]);await new Promise(r=>setTimeout(r,400));o2.paused=a.paused;o2.readyState=a.readyState;o2.audio_time=a.currentTime;o2.err=a.error?a.error.code:null;a.pause()}catch(e){o2.audio='ERR '+e.name}
+__report('audio',o2)};
+__report('web',o)})()</script>"#),
         ),
         (_, "/") => (
             "200 OK",

@@ -87,8 +87,11 @@ CASES = [
     C("STORE", "Rust(cookie manager)에서 쿠키 설정 → 서버가 수신", {"cef156": "B1b.set_cookie_from_rust"}),
     C("STORE", "쿠키 개별 삭제", {"cef156": "B1c.delete_one_cookie"}),
     C("STORE", "쿠키 전체 삭제", {"cef156": "B1d.delete_all_cookies"}),
-    C("STORE", "프로필/세션 분리(RequestContext 별 캐시 경로, Electron partition 대응), 시크릿(메모리) 모드", todo=("P0", "headless")),
-    C("STORE", "localStorage/IndexedDB 영속, 쿠키 SameSite 정책별 전송", todo=("P1", "headless")),
+    C("STORE", "프로필 격리: RequestContext 별 캐시 경로로 쿠키 분리(Electron partition 대응)", {"cef156": "PR1.profile_isolation"}),
+    C("STORE", "디스크 프로필은 컨텍스트를 다시 만들어도 쿠키 유지", {"cef156": "PR2.disk_profile_persists_across_context_recreate"}),
+    C("STORE", "시크릿(메모리 전용) 컨텍스트는 재생성 시 쿠키 없음", {"cef156": "PR3.incognito_context_not_persisted"}),
+    C("STORE", "localStorage / IndexedDB 읽기·쓰기", {"cef156": "W3.localstorage_indexeddb"}),
+    C("STORE", "localStorage/IndexedDB 앱 재시작 후 유지, 쿠키 SameSite 정책별 전송", todo=("P1", "headless")),
     # ================= INPUT =================
     C("INPUT", "영문 텍스트 입력", {"wry": "I1.latin_text", "cef151": "I1.latin_text"}),
     C("INPUT", "한글 IME 조합 이벤트(NSTextInputClient 호출 모사)", {"wry": "I2.korean_ime_composition", "cef151": "I2.korean_ime_composition"}),
@@ -120,8 +123,9 @@ CASES = [
     C("INPUT", "핀치 줌(트랙패드 magnify → ctrl+wheel 또는 zoom level), 한계값, 중심점", todo=("P0", "gui")),
     C("INPUT", "키보드 줌(Cmd +/−/0), 도메인별 기억 연동", todo=("P0", "headless")),
     C("INPUT", "휠 스크롤 정확도(픽셀/라인, 관성, 가로, 중첩 스크롤), 부드러운 스크롤", todo=("P0", "gui")),
-    C("INPUT", "키 반복·수식키 조합·keydown/up 순서", todo=("P1", "headless")),
-    C("INPUT", "호버/mouseleave, 패널 밖으로 나갈 때 leave 이벤트", todo=("P1", "headless")),
+    C("INPUT", "키 반복 시 e.repeat 플래그(IS_REPEAT 수식키 전달)", {"cef156": "H2.key_repeat_flag"}),
+    C("INPUT", "수식키 조합·keydown/up 순서 정확성", todo=("P1", "headless")),
+    C("INPUT", "호버 enter/leave, 패널 밖으로 나갈 때 mouseleave", {"cef156": "H1.hover_enter_leave_and_panel_exit"}),
     C("INPUT", "중간 버튼/Cmd+클릭(새 탭), 마우스 뒤로/앞으로 버튼", todo=("P1", "gui")),
     C("INPUT", "드래그&드롭(페이지 내, 링크/이미지, 외부 파일 드롭)", todo=("P1", "gui")),
     C("INPUT", "웹뷰↔gpui 입력칸 간 포커스 이동, 창 비활성/활성 시 캐럿·:focus", todo=("P0", "gui")),
@@ -139,10 +143,12 @@ CASES = [
     C("NAV", "window.open(제스처) features(크기)·opener 유지", {"cef156": "B4b.window_open_with_gesture_features_opener"}),
     C("NAV", "noopener 팝업은 opener 없음", {"cef156": "B4c.noopener_popup_has_no_opener"}),
     C("NAV", "팝업 허용/차단 정책 훅(on_before_popup)", {"cef156": "B4d.popup_policy_hook_exists"}),
-    C("NAV", "탭: 다중 브라우저 생성·전환·닫기, 백그라운드 탭 렌더 중지(was_hidden), 탭별 크기/포커스", todo=("P0", "headless")),
-    C("NAV", "탭 닫기 시 메모리 해제, 탭 복원", todo=("P1", "headless")),
+    C("NAV", "탭: 다중 브라우저 동시 생성, 탭별 독립 페이지", {"cef156": "T1.tabs_create_distinct"}),
+    C("NAV", "숨긴 탭은 렌더 중지(was_hidden), 다시 보이면 재개", {"cef156": "T2.hidden_tabs_stop_rendering"}),
+    C("NAV", "탭 닫기 정리(모든 탭 해제, 닫힘 이벤트)", {"cef156": "T3.tabs_close_cleanup"}),
+    C("NAV", "탭 복원(세션 복원), 탭별 크기/포커스 전환", todo=("P1", "headless")),
     C("NAV", "외부 프로토콜(mailto:/tel:) → OS 열기 정책", todo=("P2", "headless")),
-    C("NAV", "로딩 진행률(on_loading_progress_change)", todo=("P1", "headless")),
+    C("NAV", "로딩 진행률(on_loading_progress_change)이 1.0 에 도달", {"cef156": "N1.loading_progress_reaches_1"}),
     # ================= UI =================
     C("UI", "우클릭 컨텍스트 메뉴를 gpui 가 그림(기본 메뉴 제거)", {"cef151": "U4.context_menu_requested"}),
     C("UI", "gpui 메뉴 항목('Select all') 동작·메뉴 닫힘", {"cef151": "U4.context_menu_action"}),
@@ -151,19 +157,29 @@ CASES = [
     C("UI", "다운로드(경로 지정, 완료 콜백, 내용 일치)", {"cef151": "U6.download"}),
     C("UI", "파일 선택 <input type=file>(테스트 고정 경로)", {"cef151": "U6.file_chooser"}),
     C("UI", "원격 디버깅 엔드포인트(/json/version, /json/list, WS URL)", {"cef156": "B7a.remote_debugging_endpoints"}),
-    C("UI", "DevTools UI: gpui 패널(두 번째 windowless 브라우저)에 렌더. 참고: 응답의 frontend URL 은 외부 호스팅(chrome-devtools-frontend.appspot.com)", todo=("P0", "headless")),
+    C("UI", "DevTools 프론트엔드가 CEF 번들에서 로컬로 제공됨(/devtools/inspector.html 200)", {"cef156": "D1.devtools_frontend_assets_served_locally"}),
+    C("UI", "DevTools 를 두 번째 windowless 브라우저로 로드·렌더(gpui 패널 후보). 참고: /json/list 의 frontend URL 은 외부 호스팅", {"cef156": "D2.devtools_in_second_windowless_browser"}),
     C("UI", "컨텍스트 메뉴 완성(링크/이미지/선택 텍스트/입력칸/페이지 항목별 동작)", todo=("P1", "gui")),
     C("UI", "이미지 저장/복사, download_image, 진행률·취소·재시도", todo=("P1", "headless")),
-    C("UI", "권한 프롬프트(카메라/마이크/위치/알림/클립보드/화면 공유)", todo=("P1", "gui")),
-    C("UI", "HTTP 인증 프롬프트, 인증서 오류 경고/예외, 혼합 콘텐츠", todo=("P1", "headless")),
-    C("UI", "클립보드 API(navigator.clipboard), 이미지 붙여넣기", todo=("P1", "headless")),
+    C("UI", "권한 프롬프트(카메라/마이크/위치/알림/화면 공유)", todo=("P1", "gui")),
+    C("UI", "HTTP 인증 콜백이 호출되지 않는 원인 조사(401 → ERR_INVALID_AUTH_CREDENTIALS)", todo=("P1", "headless")),
+    C("UI", "HTTP Basic 인증: RequestHandler.auth_credentials 로 자격 증명 제공", {"cef156": "A1.http_basic_auth_prompt_handled"}),
+    C("UI", "HTTP 인증: URL 자격 증명(http://u:p@host/)", {"cef156": "A2.http_auth_via_url_credentials"}),
+    C("UI", "인증서 오류 경고/예외, 혼합 콘텐츠", todo=("P1", "headless")),
+    C("UI", "navigator.clipboard.writeText → 시스템 클립보드", {"cef156": "C1.clipboard_write_api"}),
+    C("UI", "navigator.clipboard.readText/이미지 붙여넣기, 권한 처리", todo=("P1", "headless")),
     C("UI", "전체화면 API(비디오/페이지), Esc 해제와 gpui 레이아웃 연동", todo=("P1", "gui")),
     C("UI", "네이티브 파일 열기/저장 대화상자 연동(현재는 테스트용 고정 경로)", todo=("P1", "gui")),
     C("UI", "인쇄/PDF 저장, 내장 PDF 뷰어", todo=("P2", "headless")),
     C("UI", "접근성(스크린 리더)·키보드만으로 조작", todo=("P2", "manual")),
     # ================= WEB =================
-    C("WEB", "미디어: <video>/<audio> 재생, 자동재생 정책, 코덱(H.264/AAC 지원 여부), 음소거, PiP", todo=("P0", "headless")),
-    C("WEB", "WebSocket, Service Worker, WebGL/WebGPU, WebRTC, 웹폰트", todo=("P1", "headless")),
+    C("WEB", "코덱 지원 여부(canPlayType: H.264/AAC/VP9/AV1/MP3/Opus)", {"cef156": "W1.codec_support"}),
+    C("WEB", "오디오 재생 파이프라인(자동재생 정책: 제스처 전 거절, 클릭 후 재생)", {"cef156": "W6.audio_playback_pipeline"}),
+    C("WEB", "비디오 재생, PiP, 전체 화면 비디오", todo=("P0", "gui")),
+    C("WEB", "WebGL2 / WebGPU 사용 가능", {"cef156": "W2.webgl2_webgpu"}),
+    C("WEB", "Service Worker 등록·활성화", {"cef156": "W4.service_worker"}),
+    C("WEB", "WebRTC RTCPeerConnection.createOffer", {"cef156": "W5.webrtc_offer"}),
+    C("WEB", "WebSocket 연결, 웹폰트 로딩", todo=("P1", "headless")),
     C("WEB", "한글/이모지 폰트 폴백, 텍스트 렌더링 품질", todo=("P1", "gui")),
     C("WEB", "User-Agent/언어/프록시 설정, 다운로드 폴더 정책", todo=("P2", "headless")),
     # ================= IPC =================
@@ -179,12 +195,14 @@ CASES = [
     C("PERF", "애니메이션 프레임레이트(rAF)", {"cef151": "P1.animation_fps"}),
     C("PERF", "리사이즈 지연(토글 → 올바른 크기 프레임 도착)", {"cef151": "P1.resize_latency"}),
     C("PERF", "프레임 파이프라인 비용(CPU 복사 + RenderImage)", {"cef151": "P2.frame_pipeline_cost"}),
-    C("PERF", "탭 다수(10~30개) 메모리/CPU, 숨긴 탭 프레임 전달 중지", todo=("P0", "headless")),
+    C("PERF", "탭 10개 메모리(프로세스 트리 RSS), 닫은 뒤 회수", {"cef156": "T4.tabs_memory"}),
+    C("PERF", "탭 30개 이상, CPU 사용률, 숨긴 탭 CPU", todo=("P1", "headless")),
     C("PERF", "프레임 전달: CPU 복사 vs IOSurface 공유 텍스처, 4K/고주사율", todo=("P1", "gui")),
     C("PERF", "영상 재생·고해상도 스크롤 프레임 안정성", todo=("P1", "gui")),
     # ================= STAB =================
     C("STAB", "종료 후 헬퍼 프로세스가 남지 않음", {}, {"cef156": fx("PASS", "스위트 종료 2초 뒤 spike-cef 프로세스 0개", "auto-headless", "218b7f5")}),
-    C("STAB", "렌더러 크래시 복구(on_render_process_terminated → 다시 로드), 행 처리", todo=("P0", "headless")),
+    C("STAB", "렌더러 크래시 복구(on_render_process_terminated → 다시 이동하면 정상)", {"cef156": "ST1.renderer_crash_recovery"}),
+    C("STAB", "렌더러 응답 없음(행) 처리", todo=("P1", "headless")),
     C("STAB", "장시간 구동 메모리 누수, 프레임 버퍼 해제", todo=("P1", "headless")),
     C("STAB", "악성/대용량 페이지(무한 루프, 거대 이미지)에서 UI 응답성", todo=("P1", "headless")),
     C("STAB", "번들 덮어쓰기 시 코드서명 캐시 불일치(SIGKILL Code Signature Invalid) 주의", {}, {"cef156": fx("INFO", "번들 삭제 후 재생성 + ad-hoc 재서명으로 해결(스크립트 반영)", "auto-headless", "beace55")}),
@@ -275,62 +293,35 @@ def cmd_render(_):
     rows.sort(key=lambda r: (order[r["category"]], r["id"], r["engine"], r["engine_version"]))
     icon = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "INFO": "ℹ️ INFO", "TODO": "⬜ TODO", "UNSUPPORTED": "🚫 UNSUPPORTED", "SKIP": "⏭ SKIP", "PARTIAL": "⚠️ PARTIAL"}
     is_wry = lambda r: r["engine"].startswith("wry")
-    # ---- 요약(분류별, 엔진 구분) ----
-    def counts(rs):
-        out = {}
+    cef, wry = [r for r in rows if not is_wry(r)], [r for r in rows if is_wry(r)]
+
+    def cnt(rs):
+        o = {}
         for r in rs:
-            out[r["result"]] = out.get(r["result"], 0) + 1
-        return out
-    keys = ["PASS", "FAIL", "INFO", "UNSUPPORTED", "TODO"]
-    sl = ["| 분류 | 설명 | 케이스 수 | CEF 결과(PASS/FAIL/INFO/UNSUP/TODO) | wry 결과(PASS/FAIL/INFO) |", "|---|---|---|---|---|"]
-    tot_cases = 0
-    for c, desc in CATEGORIES:
-        rc = [r for r in rows if r["category"] == c]
-        n = len({r["id"] for r in rc})
-        tot_cases += n
-        cc, wc = counts([r for r in rc if not is_wry(r)]), counts([r for r in rc if is_wry(r)])
-        sl.append(f"| {c} | {desc} | {n} | " + "/".join(str(cc.get(k, 0)) for k in keys) + " | " + ("/".join(str(wc.get(k, 0)) for k in keys[:3]) if wc else "—") + " |")
-    # ---- 표 1: 검증표(케이스 마스터) ----
-    ids = []
-    for r in rows:
-        if r["id"] not in ids:
-            ids.append(r["id"])
-    def latest_cef(i):
-        cands = [r for r in rows if r["id"] == i and not is_wry(r)]
-        cands.sort(key=lambda r: r["engine_version"])
-        return cands[-1] if cands else None
-    t1 = ["| ID | 분류 | 케이스 | 우선 | 계획 방법 | CEF 최신 | wry |", "|---|---|---|---|---|---|---|"]
-    for i in ids:
-        rs = [r for r in rows if r["id"] == i]
-        r0 = rs[0]
-        cef = latest_cef(i)
-        wry = next((r for r in rs if is_wry(r)), None)
-        pri = next((r["priority"] for r in rs if r["priority"]), "") or "완료"
-        plan = next((r["method"].replace("plan:", "") for r in rs if r["method"].startswith("plan:")), "")
-        if not plan:
-            plan = next((r["method"] for r in rs if r["method"]), "")
-        cef_s = (icon.get(cef["result"], cef["result"]) + (f' ({cef["engine_version"]})' if cef["engine_version"] else "")) if cef else "—"
-        wry_s = icon.get(wry["result"], wry["result"]) if wry else "—"
-        t1.append(f"| {i} | {r0['category']} | {esc(r0['case'])} | {pri} | {plan} | {cef_s} | {wry_s} |")
-    # ---- 표 2/3: 엔진별 상세 결과 ----
-    def detail_table(rs):
-        t = ["| ID | 케이스 | 엔진 버전 | 결과 | 방법 | 상세 | 커밋 | 날짜 |", "|---|---|---|---|---|---|---|---|"]
+            o[r["result"]] = o.get(r["result"], 0) + 1
+        return " · ".join(f"{k} {o[k]}" for k in ["PASS", "FAIL", "INFO", "UNSUPPORTED", "TODO"] if k in o)
+
+    def table(rs, with_priority):
+        h = ["ID", "분류", "케이스", "엔진 버전", "결과", "방법", "상세", "커밋", "날짜"] + (["우선"] if with_priority else [])
+        t = ["| " + " | ".join(h) + " |", "|" + "---|" * len(h)]
         for r in rs:
-            t.append("| {id} | {case} | {v} | {res} | {m} | {d} | {c} | {dt} |".format(
-                id=r["id"], case=esc(r["case"]), v=esc(r["engine_version"]), res=icon.get(r["result"], r["result"]),
-                m=esc(r["method"]), d=esc(r["detail"]), c=r["commit"] and f'`{r["commit"]}`', dt=r["date"]))
-        return t
-    t2 = detail_table([r for r in rows if not is_wry(r)])
-    t3 = detail_table([r for r in rows if is_wry(r)])
+            cells = [r["id"], r["category"], esc(r["case"]), esc(r["engine_version"]), icon.get(r["result"], r["result"]),
+                     esc(r["method"]), esc(r["detail"]), r["commit"] and f'`{r["commit"]}`', r["date"]]
+            if with_priority:
+                cells.append(r["priority"])
+            t.append("| " + " | ".join(str(c) for c in cells) + " |")
+        return "\n".join(t)
+
+    cats = " · ".join(f"**{c}** {d}" for c, d in CATEGORIES)
     block = ("<!-- RESULTS:BEGIN (scripts/results.py render 로 생성, 직접 수정 금지) -->\n"
-             "### 요약\n\n" + "\n".join(sl) + f"\n\n(케이스 {tot_cases}개 / 결과 행 {len(rows)}개)\n\n"
-             "## 표 1. 검증표 (케이스 목록)\n\n" + "\n".join(t1) +
-             "\n\n## 표 2. CEF 결과 (gpui + CEF off-screen rendering)\n\n" + "\n".join(t2) +
-             "\n\n## 표 3. wry 결과 (gpui + wry/WKWebView child view)\n\n" + "\n".join(t3) + "\n<!-- RESULTS:END -->")
+             f"분류: {cats}\n\n"
+             f"## 표 1. CEF 결과 — gpui + CEF off-screen rendering ({len(cef)}행: {cnt(cef)})\n\n" + table(cef, True) +
+             f"\n\n## 표 2. wry 결과 — gpui + wry(WKWebView) child view ({len(wry)}행: {cnt(wry)})\n\n" + table(wry, False) +
+             "\n<!-- RESULTS:END -->")
     md = open(MD).read()
     md = re.sub(r"<!-- RESULTS:BEGIN.*?<!-- RESULTS:END -->", lambda m: block, md, flags=re.S)
     open(MD, "w").write(md)
-    print(f"render: {len(rows)} rows ({len(ids)} cases) -> {MD}")
+    print(f"render: cef {len(cef)} rows, wry {len(wry)} rows -> {MD}")
 
 
 if __name__ == "__main__":

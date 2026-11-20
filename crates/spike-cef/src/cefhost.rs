@@ -42,6 +42,9 @@ pub struct St {
     /// 컨텍스트 메뉴 요청(논리 좌표, 메인 뷰 기준) + 링크 URL
     pub ctx: Option<(i32, i32, String)>,
     pub ui_gen: u64,
+    pub progress: f64,
+    pub auth_requests: Vec<String>,
+    pub auth_credentials: Option<(String, String)>,
     pub tabs: Vec<Browser>,
     pub tab_closed: u32,
     pub tab_paints: std::collections::HashMap<i32, u64>,
@@ -87,6 +90,9 @@ impl Default for St {
             cursor: 0,
             ctx: None,
             ui_gen: 0,
+            progress: 0.0,
+            auth_requests: vec![],
+            auth_credentials: None,
             tabs: vec![],
             tab_closed: 0,
             tab_paints: Default::default(),
@@ -114,6 +120,10 @@ impl Default for St {
 thread_local! {
     pub static ST: RefCell<St> = RefCell::new(St::default());
 }
+
+/// 일부 콜백(HTTP 인증 등)은 UI 가 아닌 IO 스레드에서 불린다 → thread_local 대신 프로세스 전역으로 공유
+pub static AUTH_CREDENTIALS: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+pub static AUTH_REQUESTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 pub fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
     ST.with(|s| f(&mut s.borrow_mut()))
@@ -256,6 +266,7 @@ wrap_life_span_handler! {
             let Some(b) = browser else { return };
             let is_popup = b.is_popup() == 1;
             let b = b.clone();
+            with(|s| s.log.push(format!("created browser id={} which={:?} popup={is_popup} url={}", b.identifier(), self.which, b.main_frame().map(|f| CefString::from(&f.url()).to_string()).unwrap_or_default())));
             with(|s| {
                 if is_popup {
                     s.popup = Some(b);
@@ -307,6 +318,10 @@ wrap_display_handler! {
             let s = source.map(|m| m.to_string()).unwrap_or_default();
             with(|st| st.log.push(format!("[console:{:?}] {m} ({s}:{line})", self.which)));
             0
+        }
+
+        fn on_loading_progress_change(&self, _b: Option<&mut Browser>, progress: f64) {
+            with(|s| s.progress = progress);
         }
 
         fn on_address_change(&self, _b: Option<&mut Browser>, _f: Option<&mut Frame>, url: Option<&CefString>) {
@@ -504,6 +519,31 @@ wrap_jsdialog_handler! {
 wrap_request_handler! {
     pub struct RQH {}
     impl RequestHandler {
+        fn auth_credentials(
+            &self,
+            _b: Option<&mut Browser>,
+            origin_url: Option<&CefString>,
+            is_proxy: ::std::os::raw::c_int,
+            host: Option<&CefString>,
+            port: ::std::os::raw::c_int,
+            realm: Option<&CefString>,
+            _scheme: Option<&CefString>,
+            callback: Option<&mut AuthCallback>,
+        ) -> ::std::os::raw::c_int {
+            let o = origin_url.map(|s| s.to_string()).unwrap_or_default();
+            let h = host.map(|s| s.to_string()).unwrap_or_default();
+            let r = realm.map(|s| s.to_string()).unwrap_or_default();
+            AUTH_REQUESTS.lock().unwrap().push(format!("auth origin={o} host={h}:{port} realm={r} proxy={is_proxy} thread={:?}", std::thread::current().name()));
+            let creds = AUTH_CREDENTIALS.lock().unwrap().clone();
+            match (callback, creds) {
+                (Some(cb), Some((u, p))) => {
+                    cb.cont(Some(&CefString::from(u.as_str())), Some(&CefString::from(p.as_str())));
+                    1
+                }
+                _ => 0, // 자격 증명이 없으면 기본 처리(취소)
+            }
+        }
+
         fn on_render_process_terminated(&self, _b: Option<&mut Browser>, status: TerminationStatus, code: ::std::os::raw::c_int, text: Option<&CefString>) {
             let t = text.map(|t| t.to_string()).unwrap_or_default();
             with(|s| {

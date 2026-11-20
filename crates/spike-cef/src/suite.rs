@@ -589,6 +589,283 @@ fn suite_shiftclick(r: &mut Rs) {
     }
 }
 
+// ============================================================ 추가 묶음 (탭/프로필/크래시/웹 플랫폼/입력/UI)
+fn rss_mb() -> f64 {
+    let out = std::process::Command::new("ps").args(["-axo", "rss=,command="]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    out.lines()
+        .filter(|l| l.contains("spike-cef.app"))
+        .filter_map(|l| l.trim().split_whitespace().next().and_then(|n| n.parse::<f64>().ok()))
+        .sum::<f64>()
+        / 1024.0
+}
+
+fn wait_for(secs: u64, mut cond: impl FnMut() -> bool) -> bool {
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(secs) {
+        pump(50);
+        if cond() {
+            return true;
+        }
+    }
+    false
+}
+
+fn tab_paints() -> Vec<(i32, u64)> {
+    with(|s| {
+        let mut v: Vec<_> = s.tabs.iter().map(|t| (t.identifier(), *s.tab_paints.get(&t.identifier()).unwrap_or(&0))).collect();
+        v.sort();
+        v
+    })
+}
+
+fn tab_load(i: usize, u: &str) {
+    if let Some(f) = with(|s| s.tabs.get(i).cloned()).and_then(|b| b.main_frame()) {
+        f.load_url(Some(&CefString::from(u)));
+    }
+}
+
+fn close_all_tabs() {
+    for t in with(|s| s.tabs.clone()) {
+        if let Some(h) = t.host() {
+            h.close_browser(1);
+        }
+    }
+    wait_for(10, || with(|s| s.tabs.is_empty()));
+}
+
+fn cache_root() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::env::var("SPIKE_CACHE").unwrap_or_else(|_| format!("{home}/Library/Application Support/spike-cef/cef-cache"))
+}
+
+fn suite_more(r: &mut Rs, reports: &testsite::Reports) {
+    // ---------------- 탭 ----------------
+    nav(&url("/hist/1"));
+    let rss_base = rss_mb();
+    for n in ["t1", "t2", "t3"] {
+        cefhost::create_tab(&url(&format!("/tabpage?name={n}")), None);
+    }
+    let ok = wait_for(20, || with(|s| s.tabs.len() == 3) && ["t1", "t2", "t3"].iter().all(|n| report_get(reports, &format!("tab_{n}")).is_some()));
+    let urls: Vec<_> = ["t1", "t2", "t3"].iter().map(|n| report_get(reports, &format!("tab_{n}")).unwrap_or_default()).collect();
+    r.add("T1.diag_browser_creation_log", None, format!("{:?}", with(|s| s.log.iter().filter(|l| l.starts_with("created browser")).cloned().collect::<Vec<_>>())));
+    r.add("T1.tabs_create_distinct", Some(ok && urls.iter().collect::<std::collections::HashSet<_>>().len() == 3), format!("tabs={} reported urls={urls:?}", with(|s| s.tabs.len())));
+
+    // 숨긴 탭은 렌더가 멈추는가(was_hidden)
+    for i in 0..3 {
+        tab_load(i, &url("/anim2"));
+    }
+    pump(2500);
+    let p0 = tab_paints();
+    pump(2000);
+    let p1 = tab_paints();
+    let vis: Vec<u64> = p0.iter().zip(&p1).map(|(a, b)| b.1 - a.1).collect();
+    let tabs = with(|s| s.tabs.clone());
+    for t in &tabs[1..] {
+        if let Some(h) = t.host() {
+            h.was_hidden(1);
+        }
+    }
+    pump(600);
+    let h0 = tab_paints();
+    pump(2000);
+    let h1 = tab_paints();
+    let hid: Vec<u64> = h0.iter().zip(&h1).map(|(a, b)| b.1 - a.1).collect();
+    for t in &tabs[1..] {
+        if let Some(h) = t.host() {
+            h.was_hidden(0);
+        }
+    }
+    pump(800);
+    let s0 = tab_paints();
+    pump(2000);
+    let s1 = tab_paints();
+    let shown: Vec<u64> = s0.iter().zip(&s1).map(|(a, b)| b.1 - a.1).collect();
+    r.add("T2.hidden_tabs_stop_rendering", Some(vis.iter().all(|v| *v > 20) && hid[0] > 20 && hid[1] <= 3 && hid[2] <= 3 && shown.iter().all(|v| *v > 20)),
+        format!("2s paint counts — all visible={vis:?}; tab0 visible & tab1,2 hidden={hid:?}; after show={shown:?}"));
+
+    // 메모리: 10탭
+    for i in 0..7 {
+        cefhost::create_tab(&url(&format!("/tabpage?name=m{i}")), None);
+    }
+    wait_for(30, || with(|s| s.tabs.len() == 10));
+    pump(2500);
+    let rss_10 = rss_mb();
+    close_all_tabs();
+    let closed = with(|s| s.tab_closed);
+    pump(3000);
+    let rss_after = rss_mb();
+    r.add("T3.tabs_close_cleanup", Some(with(|s| s.tabs.is_empty()) && closed >= 10), format!("tabs left={} closed events={closed}", with(|s| s.tabs.len())));
+    r.add("T4.tabs_memory", None, format!("process-tree RSS: 1 tab {rss_base:.0}MB → 10 tabs {rss_10:.0}MB (+{:.0}MB, 탭당 약 {:.0}MB) → 닫은 뒤 {rss_after:.0}MB", rss_10 - rss_base, (rss_10 - rss_base) / 9.0));
+
+    // ---------------- 프로필 격리 ----------------
+    let root = cache_root();
+    let (da, db) = (format!("{root}/ctx-A"), format!("{root}/ctx-B"));
+    let mut ca = cefhost::make_context(&da);
+    let mut cb = cefhost::make_context(&db);
+    let mut cm = cefhost::make_context("");
+    cefhost::create_tab(&url("/setcookie?name=iso&value=A&max=3600"), ca.as_mut());
+    pump(1500);
+    cefhost::create_tab(&url("/cookies?tag=B"), cb.as_mut());
+    cefhost::create_tab(&url("/cookies?tag=A2"), ca.as_mut());
+    wait_for(15, || report_get(reports, "cookies_B").is_some() && report_get(reports, "cookies_A2").is_some());
+    nav(&url("/cookies?tag=D"));
+    let (cb_s, ca_s, cd_s) = (report_get(reports, "cookies_B").unwrap_or_default(), report_get(reports, "cookies_A2").unwrap_or_default(), report_get(reports, "cookies_D").unwrap_or_default());
+    r.add("PR1.profile_isolation", Some(ca_s.contains("iso=A") && !cb_s.contains("iso") && !cd_s.contains("iso")), format!("ctxA sees {ca_s:?}; ctxB sees {cb_s:?}; default context sees {cd_s:?}"));
+    // 메모리 전용(시크릿)
+    cefhost::create_tab(&url("/setcookie?name=iso&value=M&max=3600"), cm.as_mut());
+    pump(1500);
+    cefhost::create_tab(&url("/cookies?tag=M2"), cm.as_mut());
+    wait_for(15, || report_get(reports, "cookies_M2").is_some());
+    let m2 = report_get(reports, "cookies_M2").unwrap_or_default();
+    // 디스크 프로필: 컨텍스트를 다시 만들어도 쿠키가 남는가 / 메모리 전용은 사라지는가
+    if let Some(mgr) = ca.as_ref().and_then(|c| c.cookie_manager(None)) {
+        mgr.flush_store(None);
+    }
+    pump(800);
+    close_all_tabs();
+    drop(ca);
+    drop(cm);
+    pump(800);
+    let mut ca2 = cefhost::make_context(&da);
+    let mut cm2 = cefhost::make_context("");
+    cefhost::create_tab(&url("/cookies?tag=A3"), ca2.as_mut());
+    cefhost::create_tab(&url("/cookies?tag=M3"), cm2.as_mut());
+    wait_for(15, || report_get(reports, "cookies_A3").is_some() && report_get(reports, "cookies_M3").is_some());
+    let (a3, m3) = (report_get(reports, "cookies_A3").unwrap_or_default(), report_get(reports, "cookies_M3").unwrap_or_default());
+    r.add("PR2.disk_profile_persists_across_context_recreate", Some(a3.contains("iso=A")), format!("recreated ctxA sees {a3:?}"));
+    r.add("PR3.incognito_context_not_persisted", Some(m2.contains("iso=M") && !m3.contains("iso")), format!("in-memory ctx sees {m2:?} while alive; recreated in-memory ctx sees {m3:?}"));
+    close_all_tabs();
+
+    // ---------------- 렌더러 크래시 복구 ----------------
+    nav(&url("/hist/1"));
+    let t0 = with(|s| s.terminated);
+    if let Some(f) = main_browser().and_then(|b| b.main_frame()) {
+        f.load_url(Some(&CefString::from("chrome://crash")));
+    }
+    let mut via = "chrome://crash";
+    if !wait_for(8, || with(|s| s.terminated) > t0) {
+        via = "kill -9 renderer";
+        let _ = std::process::Command::new("sh").args(["-c", "pkill -9 -f 'spike-cef.*--type=renderer'"]).status();
+        wait_for(8, || with(|s| s.terminated) > t0);
+    }
+    let terminated = with(|s| s.terminated) - t0;
+    nav(&url("/hist/2"));
+    let title = ev("document.title");
+    r.add("ST1.renderer_crash_recovery", Some(terminated >= 1 && title == "hist 2"), format!("crash via {via}: on_render_process_terminated x{terminated}; after navigating again title={title:?}; log={:?}", with(|s| s.log.iter().filter(|l| l.starts_with("render_process_terminated")).cloned().collect::<Vec<_>>())));
+
+    // ---------------- DevTools 프론트엔드 ----------------
+    nav(&url("/hist/1"));
+    let list = http_get(9222, "/json/list").unwrap_or_default();
+    let page_id = list.lines().find(|l| l.contains("\"id\"")).and_then(|l| l.split('"').nth(3)).unwrap_or("").to_string();
+    let insp = http_get(9222, "/devtools/inspector.html").unwrap_or_default();
+    let status = insp.lines().next().unwrap_or("").to_string();
+    r.add("D1.devtools_frontend_assets_served_locally", Some(status.contains("200")), format!("GET /devtools/inspector.html → {status:?} (404 면 최소 CEF 번들에 DevTools UI 리소스가 없음)"));
+    cefhost::create_tab(&format!("http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/{page_id}"), None);
+    wait_for(15, || with(|s| s.tabs.len() == 1));
+    pump(4000);
+    let painted = tab_paints().first().map(|t| t.1).unwrap_or(0);
+    let errs = with(|s| s.load_errors.clone());
+    r.add("D2.devtools_in_second_windowless_browser", Some(status.contains("200") && painted > 5 && errs.is_empty()), format!("frontend status={status:?} tab paints={painted} load errors={errs:?}"));
+    close_all_tabs();
+
+    // ---------------- 웹 플랫폼 ----------------
+    reports.lock().unwrap().remove("web");
+    nav(&url("/web"));
+    wait_for(30, || report_get(reports, "web").is_some());
+    let w: serde_json::Value = serde_json::from_str(&report_get(reports, "web").unwrap_or_default()).unwrap_or_default();
+    r.add("W1.codec_support", None, format!("canPlayType {}", w["codecs"]));
+    r.add("W2.webgl2_webgpu", Some(w["webgl2"] == true), format!("webgl2={} renderer={} navigator.gpu={}", w["webgl2"], w["renderer"], w["webgpu"]));
+    r.add("W3.localstorage_indexeddb", Some(w["ls"] == "v1" && w["idb"] == "v2"), format!("localStorage={} indexedDB={}", w["ls"], w["idb"]));
+    r.add("W4.service_worker", Some(w["sw"] == "active"), format!("service worker={}", w["sw"]));
+    r.add("W5.webrtc_offer", Some(w["rtc"] == "offer"), format!("RTCPeerConnection.createOffer={}", w["rtc"]));
+    // 오디오: 제스처 없이(기본 자동재생 정책) / 사용자 클릭 후
+    reports.lock().unwrap().remove("audio");
+    exec("window.__audio()");
+    wait_for(8, || report_get(reports, "audio").is_some());
+    let a_no: serde_json::Value = serde_json::from_str(&report_get(reports, "audio").unwrap_or_default()).unwrap_or_default();
+    reports.lock().unwrap().remove("audio");
+    mouse(300.0, 300.0, 0, 1);
+    exec("window.__audio()");
+    wait_for(8, || report_get(reports, "audio").is_some());
+    let a_yes: serde_json::Value = serde_json::from_str(&report_get(reports, "audio").unwrap_or_default()).unwrap_or_default();
+    r.add("W6.audio_playback_pipeline", Some(a_yes["audio_time"].as_f64().unwrap_or(0.0) > 0.3), format!("muted <audio> without user gesture → {a_no}; after user click → {a_yes} (play: resolved|rejected|pending)"));
+
+    // ---------------- 입력: hover / 키 반복 ----------------
+    nav(&url("/hover"));
+    if let (Some(h), Some((bx, by))) = (host(), rect_of(&["#box"])) {
+        let out = MouseEvent { x: 600, y: 400, modifiers: 0 };
+        let inn = MouseEvent { x: bx as i32, y: by as i32, modifiers: 0 };
+        h.send_mouse_move_event(Some(&out), 0);
+        pump(150);
+        h.send_mouse_move_event(Some(&inn), 0);
+        pump(200);
+        let e1 = ev("JSON.stringify(__h)");
+        h.send_mouse_move_event(Some(&out), 0);
+        pump(200);
+        let e2 = ev("JSON.stringify(__h)");
+        h.send_mouse_move_event(Some(&inn), 0);
+        pump(150);
+        h.send_mouse_move_event(Some(&inn), 1); // 패널 밖으로 나감(mouse_leave)
+        pump(250);
+        let e3 = ev("JSON.stringify(__h)");
+        r.add("H1.hover_enter_leave_and_panel_exit", Some(e1.contains("\"enter\":1") && e2.contains("\"leave\":1") && e3.contains("\"leave\":2")), format!("after enter={e1} after move-out={e2} after panel-leave={e3}"));
+    }
+    nav(&url("/hover"));
+    if let Some(h) = host() {
+        mouse(300.0, 300.0, 0, 1);
+        let mk = |t: KeyEventType, mods: u32| KeyEvent { size: std::mem::size_of::<sys::cef_key_event_t>(), type_: t, modifiers: mods, windows_key_code: 65, native_key_code: 0, is_system_key: 0, character: 97, unmodified_character: 97, focus_on_editable_field: 0 };
+        h.send_key_event(Some(&mk(KeyEventType::RAWKEYDOWN, 0)));
+        h.send_key_event(Some(&mk(KeyEventType::RAWKEYDOWN, 1 << 13))); // EVENTFLAG_IS_REPEAT
+        h.send_key_event(Some(&mk(KeyEventType::RAWKEYDOWN, 1 << 13)));
+        h.send_key_event(Some(&mk(KeyEventType::KEYUP, 0)));
+        pump(300);
+        let k = ev("JSON.stringify(__k)");
+        r.add("H2.key_repeat_flag", Some(k == "[\"d\",\"R\",\"R\"]"), format!("keydown sequence (d=first, R=e.repeat) = {k}"));
+    }
+
+    // ---------------- UI: HTTP 인증 / 클립보드 / 로딩 진행률 ----------------
+    *cefhost::AUTH_CREDENTIALS.lock().unwrap() = None;
+    cefhost::AUTH_REQUESTS.lock().unwrap().clear();
+    nav(&url("/auth"));
+    let no_cred = cefhost::AUTH_REQUESTS.lock().unwrap().len();
+    let body0 = ev("document.body.innerText");
+    let errs0 = with(|s| s.load_errors.clone());
+    *cefhost::AUTH_CREDENTIALS.lock().unwrap() = Some(("u".into(), "p".into()));
+    reports.lock().unwrap().remove("auth_ok");
+    nav(&url("/auth"));
+    wait_for(5, || report_get(reports, "auth_ok").is_some());
+    let a = report_get(reports, "auth_ok").unwrap_or_default();
+    r.add("A1.http_basic_auth_prompt_handled", Some(a.contains("dTpw") && no_cred >= 1), format!("auth requests without credentials={no_cred}; with credentials server saw {a:?} (dTpw = base64 'u:p'); requests={:?}; page text without credentials={body0:?} load errors={errs0:?}", cefhost::AUTH_REQUESTS.lock().unwrap().clone()));
+    // 자격 증명을 URL 에 넣는 방식(콜백 대신)
+    reports.lock().unwrap().remove("auth_ok");
+    nav("http://u:p@127.0.0.1:18080/auth");
+    wait_for(5, || report_get(reports, "auth_ok").is_some());
+    let a2 = report_get(reports, "auth_ok").unwrap_or_default();
+    r.add("A2.http_auth_via_url_credentials", Some(a2.contains("dTpw")), format!("http://u:p@host/ → server saw Authorization {a2:?}"));
+    let saved = std::process::Command::new("pbpaste").output().map(|o| o.stdout).unwrap_or_default();
+    reports.lock().unwrap().remove("clip_write");
+    nav(&url("/clip"));
+    click_sel("#b");
+    wait_for(5, || report_get(reports, "clip_write").is_some());
+    pump(300);
+    let cw = report_get(reports, "clip_write").unwrap_or_default();
+    let sys = std::process::Command::new("pbpaste").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    {
+        use std::io::Write;
+        if let Ok(mut c) = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn() {
+            if let Some(mut i) = c.stdin.take() {
+                let _ = i.write_all(&saved);
+            }
+            let _ = c.wait();
+        }
+    }
+    r.add("C1.clipboard_write_api", Some(cw == "OK" && sys == "spike-clip-ok"), format!("navigator.clipboard.writeText → {cw:?}; system clipboard={sys:?} (사용자 클립보드는 복원함)"));
+    with(|s| s.progress = 0.0);
+    nav(&url("/hist/3"));
+    let prog = with(|s| s.progress);
+    r.add("N1.loading_progress_reaches_1", Some((prog - 1.0).abs() < 1e-6), format!("final on_loading_progress_change={prog}"));
+}
+
 pub fn run(which: &str) {
     let reports = testsite::spawn(18080);
     let _ = cefhost::apply_prefs_off; // 사용 안 함 경고 방지
@@ -600,7 +877,9 @@ pub fn run(which: &str) {
             break;
         }
     }
-    cefhost::create_main_browser("about:blank");
+    if with(|s| s.main.is_none()) {
+        cefhost::create_main_browser("about:blank");
+    }
     for _ in 0..300 {
         pump(50);
         if with(|s| s.main.is_some()) {
@@ -626,6 +905,9 @@ pub fn run(which: &str) {
     }
     if which == "browser" || which == "all" {
         suite_browser(&mut rs, &reports);
+    }
+    if which == "more" || which == "all" {
+        suite_more(&mut rs, &reports);
     }
     let pass = rs.0.iter().filter(|r| r.1 == "PASS").count();
     let fail = rs.0.iter().filter(|r| r.1 == "FAIL").count();
