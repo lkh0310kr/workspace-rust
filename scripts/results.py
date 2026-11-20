@@ -271,34 +271,66 @@ def esc(s):
 
 def cmd_render(_):
     rows = load()
-    cat_name = dict(CATEGORIES)
     order = {c: i for i, (c, _) in enumerate(CATEGORIES)}
     rows.sort(key=lambda r: (order[r["category"]], r["id"], r["engine"], r["engine_version"]))
     icon = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "INFO": "ℹ️ INFO", "TODO": "⬜ TODO", "UNSUPPORTED": "🚫 UNSUPPORTED", "SKIP": "⏭ SKIP", "PARTIAL": "⚠️ PARTIAL"}
-    lines = ["| ID | 분류 | 케이스 | 엔진 | 결과 | 방법 | 상세 | 커밋 | 날짜 | 우선 |", "|---|---|---|---|---|---|---|---|---|---|"]
-    for r in rows:
-        eng = (r["engine"] + (" " + r["engine_version"] if r["engine_version"] else "")).strip()
-        lines.append("| {id} | {cat} | {case} | {eng} | {res} | {m} | {d} | {c} | {dt} | {p} |".format(
-            id=r["id"], cat=r["category"], case=esc(r["case"]), eng=esc(eng), res=icon.get(r["result"], r["result"]),
-            m=esc(r["method"]), d=esc(r["detail"]), c=r["commit"] and f'`{r["commit"]}`', dt=r["date"], p=r["priority"]))
-    # 요약
-    summ = {}
-    for r in rows:
-        s = summ.setdefault(r["category"], {})
-        s[r["result"]] = s.get(r["result"], 0) + 1
-    sl = ["| 분류 | 설명 | PASS | FAIL | INFO | UNSUPPORTED | TODO |", "|---|---|---|---|---|---|---|"]
-    tot = {}
+    is_wry = lambda r: r["engine"].startswith("wry")
+    # ---- 요약(분류별, 엔진 구분) ----
+    def counts(rs):
+        out = {}
+        for r in rs:
+            out[r["result"]] = out.get(r["result"], 0) + 1
+        return out
+    keys = ["PASS", "FAIL", "INFO", "UNSUPPORTED", "TODO"]
+    sl = ["| 분류 | 설명 | 케이스 수 | CEF 결과(PASS/FAIL/INFO/UNSUP/TODO) | wry 결과(PASS/FAIL/INFO) |", "|---|---|---|---|---|"]
+    tot_cases = 0
     for c, desc in CATEGORIES:
-        s = summ.get(c, {})
-        sl.append(f"| {c} | {desc} | " + " | ".join(str(s.get(k, 0)) for k in ["PASS", "FAIL", "INFO", "UNSUPPORTED", "TODO"]) + " |")
-        for k, v in s.items():
-            tot[k] = tot.get(k, 0) + v
-    sl.append("| **합계** | | " + " | ".join(f"**{tot.get(k, 0)}**" for k in ["PASS", "FAIL", "INFO", "UNSUPPORTED", "TODO"]) + " |")
-    block = "<!-- RESULTS:BEGIN (scripts/results.py render 로 생성, 직접 수정 금지) -->\n### 요약\n\n" + "\n".join(sl) + "\n\n### 전체 결과 (단일 표)\n\n" + "\n".join(lines) + "\n<!-- RESULTS:END -->"
+        rc = [r for r in rows if r["category"] == c]
+        n = len({r["id"] for r in rc})
+        tot_cases += n
+        cc, wc = counts([r for r in rc if not is_wry(r)]), counts([r for r in rc if is_wry(r)])
+        sl.append(f"| {c} | {desc} | {n} | " + "/".join(str(cc.get(k, 0)) for k in keys) + " | " + ("/".join(str(wc.get(k, 0)) for k in keys[:3]) if wc else "—") + " |")
+    # ---- 표 1: 검증표(케이스 마스터) ----
+    ids = []
+    for r in rows:
+        if r["id"] not in ids:
+            ids.append(r["id"])
+    def latest_cef(i):
+        cands = [r for r in rows if r["id"] == i and not is_wry(r)]
+        cands.sort(key=lambda r: r["engine_version"])
+        return cands[-1] if cands else None
+    t1 = ["| ID | 분류 | 케이스 | 우선 | 계획 방법 | CEF 최신 | wry |", "|---|---|---|---|---|---|---|"]
+    for i in ids:
+        rs = [r for r in rows if r["id"] == i]
+        r0 = rs[0]
+        cef = latest_cef(i)
+        wry = next((r for r in rs if is_wry(r)), None)
+        pri = next((r["priority"] for r in rs if r["priority"]), "") or "완료"
+        plan = next((r["method"].replace("plan:", "") for r in rs if r["method"].startswith("plan:")), "")
+        if not plan:
+            plan = next((r["method"] for r in rs if r["method"]), "")
+        cef_s = (icon.get(cef["result"], cef["result"]) + (f' ({cef["engine_version"]})' if cef["engine_version"] else "")) if cef else "—"
+        wry_s = icon.get(wry["result"], wry["result"]) if wry else "—"
+        t1.append(f"| {i} | {r0['category']} | {esc(r0['case'])} | {pri} | {plan} | {cef_s} | {wry_s} |")
+    # ---- 표 2/3: 엔진별 상세 결과 ----
+    def detail_table(rs):
+        t = ["| ID | 케이스 | 엔진 버전 | 결과 | 방법 | 상세 | 커밋 | 날짜 |", "|---|---|---|---|---|---|---|---|"]
+        for r in rs:
+            t.append("| {id} | {case} | {v} | {res} | {m} | {d} | {c} | {dt} |".format(
+                id=r["id"], case=esc(r["case"]), v=esc(r["engine_version"]), res=icon.get(r["result"], r["result"]),
+                m=esc(r["method"]), d=esc(r["detail"]), c=r["commit"] and f'`{r["commit"]}`', dt=r["date"]))
+        return t
+    t2 = detail_table([r for r in rows if not is_wry(r)])
+    t3 = detail_table([r for r in rows if is_wry(r)])
+    block = ("<!-- RESULTS:BEGIN (scripts/results.py render 로 생성, 직접 수정 금지) -->\n"
+             "### 요약\n\n" + "\n".join(sl) + f"\n\n(케이스 {tot_cases}개 / 결과 행 {len(rows)}개)\n\n"
+             "## 표 1. 검증표 (케이스 목록)\n\n" + "\n".join(t1) +
+             "\n\n## 표 2. CEF 결과 (gpui + CEF off-screen rendering)\n\n" + "\n".join(t2) +
+             "\n\n## 표 3. wry 결과 (gpui + wry/WKWebView child view)\n\n" + "\n".join(t3) + "\n<!-- RESULTS:END -->")
     md = open(MD).read()
     md = re.sub(r"<!-- RESULTS:BEGIN.*?<!-- RESULTS:END -->", lambda m: block, md, flags=re.S)
     open(MD, "w").write(md)
-    print(f"render: {len(rows)} rows -> {MD}")
+    print(f"render: {len(rows)} rows ({len(ids)} cases) -> {MD}")
 
 
 if __name__ == "__main__":
