@@ -560,8 +560,16 @@ fn main() {
         let v2 = view.clone();
         cx.spawn(async move |cx| {
             let mut last = 0u64;
+            let mut ticks = 0u64;
             loop {
                 do_message_loop_work();
+                // 수동 사용 시 로그인 세션이 종료 직전에 유실되지 않도록 쿠키 DB 를 주기적으로 flush (약 5초)
+                ticks += 1;
+                if ticks % 1250 == 0 {
+                    if let Some(m) = cookie_manager_get_global_manager(None) {
+                        m.flush_store(None);
+                    }
+                }
                 if with(|s| s.ready && !s.create_requested) {
                     with(|s| s.create_requested = true);
                     cefhost::create_main_browser(&url("/bg?color=ff0000"));
