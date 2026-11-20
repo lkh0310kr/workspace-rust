@@ -78,6 +78,55 @@ fn rect_of(selectors: &[&str]) -> Option<(f64, f64)> {
     (xy.len() == 2).then(|| (xy[0], xy[1]))
 }
 
+/// IPC 방식 비교 측정(창 없음): http / 커스텀 스킴 / 프로세스 메시지 / Rust→페이지 푸시 / 오리진 게이팅
+fn ipc_bench() {
+    let reports = testsite::spawn(18080);
+    let f = crate::ipc_browser::register_factory();
+    println!("scheme factory registered -> {f}");
+    let load = |u: &str| {
+        reports.lock().unwrap().remove("ipcbench");
+        if let Some(fr) = with(|s| s.main.clone()).and_then(|b| b.main_frame()) {
+            fr.load_url(Some(&CefString::from(u)));
+        }
+    };
+    for (label, u) in [("trusted origin http://127.0.0.1", "http://127.0.0.1:18080/ipcbench"), ("UNtrusted origin http://localhost", "http://localhost:18080/ipcbench")] {
+        step(&format!("bench: {label}"));
+        load(u);
+        let t = Instant::now();
+        let mut got = None;
+        while t.elapsed() < Duration::from_secs(150) {
+            pump(200);
+            if let Some(v) = reports.lock().unwrap().get("ipcbench").cloned() {
+                got = Some(v);
+                break;
+            }
+        }
+        println!("IPCBENCH {label}: {}", got.unwrap_or_else(|| "TIMEOUT".into()));
+    }
+    // Rust → 페이지 푸시: execute_java_script N 회 후 페이지 카운터가 N 이 될 때까지의 시간
+    step("bench: rust->page push");
+    load("http://127.0.0.1:18080/");
+    pump(1500);
+    exec("window.__c=0");
+    pump(200);
+    let n = 2000;
+    let t = Instant::now();
+    for _ in 0..n {
+        exec("window.__c++");
+    }
+    let sent = t.elapsed();
+    let mut done = None;
+    while t.elapsed() < Duration::from_secs(30) {
+        pump(5);
+        let v = title_query("window.__c", "__C:").unwrap_or_default();
+        if v == n.to_string() {
+            done = Some(t.elapsed());
+            break;
+        }
+    }
+    println!("IPCBENCH push: {n} execute_java_script calls queued in {:.1}ms, all applied after {:?}", sent.as_secs_f64() * 1000.0, done.map(|d| format!("{:.1}ms", d.as_secs_f64() * 1000.0)));
+}
+
 pub fn run(args: &Args, app: &mut cef::App) {
     let gid = std::env::var("SPIKE_GOOGLE_LOGIN").unwrap_or_else(|_| "lkh0310kr".into());
     let _ = &gid;
@@ -133,6 +182,10 @@ pub fn run(args: &Args, app: &mut cef::App) {
     step("browser created");
     if let Some(h) = host() { step(&format!("actual runtime_style={:?}", h.runtime_style())); }
 
+    if std::env::var("SPIKE_IPCBENCH").is_ok() {
+        ipc_bench();
+        std::process::exit(0);
+    }
     if let Some(f) = with(|s| s.main.clone()).and_then(|b| b.main_frame()) {
         f.load_url(Some(&CefString::from("https://accounts.google.com/signin/v2/identifier?hl=en")));
     }

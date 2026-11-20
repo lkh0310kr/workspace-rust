@@ -405,6 +405,18 @@ wrap_client! {
         fn dialog_handler(&self) -> Option<DialogHandler> {
             Some(DGH::new())
         }
+        fn on_process_message_received(
+            &self,
+            _b: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _src: ProcessId,
+            message: Option<&mut ProcessMessage>,
+        ) -> ::std::os::raw::c_int {
+            match (frame, message) {
+                (Some(f), Some(m)) => crate::ipc_browser::handle_process_message(f, m) as i32,
+                _ => 0,
+            }
+        }
     }
 }
 
@@ -456,6 +468,13 @@ wrap_app! {
             // 로그인 크래시 조사용: WebAuthn/passkey/키체인 관련 상세 로그
             cl.append_switch(Some(&"enable-logging".into()));
             cl.append_switch_with_value(Some(&"vmodule".into()), Some(&"*webauthn*=2,*authenticator*=2,*touch_id*=2,*keychain*=2,*fido*=2".into()));
+        }
+        fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
+            if let Some(r) = registrar {
+                use cef::sys::cef_scheme_options_t as O;
+                let opts = O::CEF_SCHEME_OPTION_STANDARD as i32 | O::CEF_SCHEME_OPTION_SECURE as i32 | O::CEF_SCHEME_OPTION_CORS_ENABLED as i32 | O::CEF_SCHEME_OPTION_FETCH_ENABLED as i32;
+                r.add_custom_scheme(Some(&CefString::from(crate::ipc_browser::SCHEME)), opts);
+            }
         }
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
             Some(BPH::new())

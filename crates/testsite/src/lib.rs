@@ -304,6 +304,22 @@ try{const c=await navigator.credentials.get({publicKey:{challenge:new Uint8Array
             "200 OK", vec![],
             page("webauthn-cond", "<input id=u autocomplete='username webauthn' style='margin:30px;font-size:22px;width:300px' placeholder='username'><pre id=result>start</pre><script>(async()=>{const out={};try{out.cma=await PublicKeyCredential.isConditionalMediationAvailable()}catch(e){out.cma='ERR '+e.name}__report('cond_cma',JSON.stringify(out));if(out.cma===true){try{const c=await navigator.credentials.get({mediation:'conditional',publicKey:{challenge:new Uint8Array(32),rpId:location.hostname,userVerification:'discouraged'}});out.get='OK'}catch(e){out.get='ERR '+e.name}__report('cond_get',JSON.stringify(out))}})()</script>"),
         ),
+        // ---- IPC 벤치: 페이지 → Rust 왕복 지연 (http / 커스텀 스킴 / 프로세스 메시지) ----
+        ("GET", "/blob") => {
+            let n: usize = q(&r.query, "n").and_then(|v| v.parse().ok()).unwrap_or(0);
+            ("200 OK", vec![], "a".repeat(n))
+        }
+        ("GET", "/ipcbench") => (
+            "200 OK", vec![],
+            page("ipcbench", "<script>(async()=>{\
+const pct=(a,p)=>a.slice().sort((x,y)=>x-y)[Math.min(a.length-1,Math.floor(a.length*p))];\
+const run=async(fn,n)=>{await fn();await fn();const t=[];const t0=performance.now();for(let i=0;i<n;i++){const s=performance.now();await fn();t.push(performance.now()-s)}const tot=performance.now()-t0;return {n,p50:+pct(t,.5).toFixed(3),p99:+pct(t,.99).toFixed(3),mean:+(tot/n).toFixed(3)}};\
+const out={origin:location.origin,bridge:typeof window.workspace};\
+const tr={http:n=>()=>fetch('/blob?n='+n).then(r=>r.text()),scheme:n=>()=>fetch('workspace://rpc/blob?n='+n).then(r=>r.text()),procmsg:n=>()=>window.workspace.invoke(n)};\
+for(const [k,f] of Object.entries(tr)){if(k==='procmsg'&&!window.workspace){out[k]='unavailable';continue}\
+try{out[k+'_64B']=await run(f(64),500);out[k+'_1MB']=await run(f(1048576),40)}catch(e){out[k]='ERR '+e}}\
+__report('ipcbench',out)})()</script>"),
+        ),
         (_, "/") => (
             "200 OK",
             vec![],

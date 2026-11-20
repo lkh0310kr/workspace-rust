@@ -3,6 +3,7 @@
 
 mod autotest;
 mod headless;
+mod ipc_browser;
 mod cefhost;
 mod macapp;
 mod native;
