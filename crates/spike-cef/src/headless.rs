@@ -165,7 +165,7 @@ pub fn run(args: &Args, app: &mut cef::App) {
     let (vw, vh) = std::env::var("SPIKE_VIEW").ok().and_then(|v| v.split_once('x').map(|(a, b)| (a.parse::<f32>().unwrap_or(1100.0), b.parse::<f32>().unwrap_or(800.0)))).unwrap_or((1100.0, 800.0));
     with(|s| {
         s.size[0] = (vw, vh);
-        s.scale = 1.0;
+        s.scale = std::env::var("SPIKE_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
     });
 
     for _ in 0..500 {
@@ -189,6 +189,33 @@ pub fn run(args: &Args, app: &mut cef::App) {
     step("browser created");
     if let Some(h) = host() { step(&format!("actual runtime_style={:?}", h.runtime_style())); }
 
+    if let Ok(u) = std::env::var("SPIKE_SHOT_URL") {
+        // 지정 URL 을 로드해 (선택) JS 실행 후 일정 시간 뒤 프레임을 PNG 로 저장
+        let _reports = testsite::spawn(18080);
+        if let Some(f) = with(|s| s.main.clone()).and_then(|b| b.main_frame()) {
+            f.load_url(Some(&CefString::from(u.as_str())));
+        }
+        pump(3000);
+        if let Ok(js) = std::env::var("SPIKE_SHOT_JS") {
+            exec(&js);
+        }
+        let wait: u64 = std::env::var("SPIKE_SHOT_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(2000);
+        pump(wait);
+        let out = std::env::var("SPIKE_SHOT_OUT").unwrap_or_else(|_| "target/shots/shot.png".into());
+        if let Some(parent) = std::path::Path::new(&out).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let (w, h, data) = with(|s| (s.surf[0].w, s.surf[0].h, s.surf[0].data.clone()));
+        let mut rgba = data;
+        for p in rgba.chunks_mut(4) {
+            p.swap(0, 2);
+        }
+        if let Some(img) = image::RgbaImage::from_raw(w, h, rgba) {
+            let _ = img.save(&out);
+            println!("SHOT saved {out} {w}x{h}");
+        }
+        std::process::exit(0);
+    }
     if let Ok(which) = std::env::var("SPIKE_SUITE") {
         crate::suite::run(&which);
         std::process::exit(0);

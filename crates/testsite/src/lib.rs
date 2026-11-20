@@ -434,6 +434,10 @@ __report('audio',o2)};
 __report('web',o)})()</script>"#),
         ),
         // 원본 radial-tree index.html 에 비교 하니스(prelude)를 주입해서 서빙 (원본 파일은 그대로)
+        ("GET", "/rte-orig") => match std::fs::read_to_string("crates/radial-tree/reference/index.html") {
+            Ok(h) => ("200 OK", vec![], h),
+            Err(_) => ("404 Not Found", vec![], "reference missing (run from repo root)".into()),
+        },
         ("GET", "/rte") => {
             let html = std::fs::read_to_string("crates/radial-tree/reference/index.html");
             let pre = std::fs::read_to_string("crates/rte-engine/tools/js_prelude.js");

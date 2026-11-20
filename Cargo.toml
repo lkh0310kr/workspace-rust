@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/testsite", "crates/spike-wry", "crates/spike-cef", "crates/rte-engine"]
+members = ["crates/testsite", "crates/spike-wry", "crates/spike-cef", "crates/rte-engine", "crates/radial-tree"]
 exclude = ["ref"]
 
 [workspace.package]

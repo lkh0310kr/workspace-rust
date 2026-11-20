@@ -5220,6 +5220,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "radial-tree"
+version = "0.0.0"
+dependencies = [
+ "core-graphics 0.24.0",
+ "gpui",
+ "image",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "raw-window-handle",
+ "rte-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "rand"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

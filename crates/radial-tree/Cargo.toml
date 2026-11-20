@@ -1,0 +1,20 @@
+[package]
+name = "radial-tree"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = "0.2.2"
+rte-engine = { path = "../rte-engine" }
+serde_json = "1"
+core-graphics = "0.24"
+image = { version = "0.25", default-features = false, features = ["png"] }
+raw-window-handle = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSView", "NSResponder", "NSScreen"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
+
+[[bin]]
+name = "radial-tree"
+path = "src/main.rs"
