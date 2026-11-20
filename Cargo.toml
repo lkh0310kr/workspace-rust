@@ -6,3 +6,19 @@ exclude = ["ref"]
 [workspace.package]
 edition = "2021"
 publish = false
+
+# radial-tree 는 dev 빌드에서도 빠르게(gpui 그리기 경로가 최적화 없이 ~8배 느림: paint 23ms → 3ms)
+[profile.dev.package.radial-tree]
+opt-level = 3
+[profile.dev.package.rte-engine]
+opt-level = 3
+[profile.dev.package.gpui]
+opt-level = 3
+[profile.dev.package.lyon_tessellation]
+opt-level = 3
+[profile.dev.package.lyon_path]
+opt-level = 3
+[profile.dev.package.metal]
+opt-level = 3
+[profile.dev.package.cosmic-text]
+opt-level = 3

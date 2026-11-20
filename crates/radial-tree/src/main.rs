@@ -76,6 +76,7 @@ struct Shared {
     focus_visible: bool,
     down_target: Option<usize>,
     size: (f64, f64),
+    bench_n: u64,
 }
 
 impl Shared {
@@ -247,6 +248,21 @@ impl Render for Root {
                 window.request_animation_frame();
             }
         }
+        if let Some(secs) = std::env::var("RTE_BENCH").ok().and_then(|v| v.parse::<f64>().ok()) {
+            let mut sh = self.sh.borrow_mut();
+            let t = sh.start.elapsed().as_secs_f64();
+            if t > secs {
+                drop(sh);
+                cx.quit();
+                return div();
+            }
+            let now = sh.now();
+            // 1.2초마다 전환: 루트 ↔ 프론트엔드(30) ↔ 뒤로
+            if !sh.en.raf && (t * 1000.0) as u64 / 1200 != sh.bench_n {
+                sh.bench_n = (t * 1000.0) as u64 / 1200;
+                if sh.bench_n % 2 == 1 { sh.en.go(30, now) } else { sh.en.back(now) }
+            }
+        }
         {
             let mut sh = self.sh.borrow_mut();
             let now = sh.now();
@@ -404,12 +420,41 @@ impl Render for Root {
                     |_, _, _| (),
                     move |bounds, _, window, cx| {
                         let sh = sh_paint.borrow();
+                        let t0 = Instant::now();
                         paint(&sh, bounds, window, cx);
+                        perf_record(&sh, t0.elapsed().as_secs_f64() * 1000.0);
                     },
                 )
                 .size_full(),
             )
     }
+}
+
+thread_local! {
+    static PERF: RefCell<(Instant, Instant, u32, f64, f64, f64)> = RefCell::new((Instant::now(), Instant::now(), 0, 0.0, 0.0, 0.0));
+}
+
+/// RTE_PERF=1: 1초마다 fps, 프레임 간격 평균/최대, paint CPU 시간 평균/최대, 글리프 수 출력
+fn perf_record(sh: &Shared, paint_ms: f64) {
+    if std::env::var_os("RTE_PERF").is_none() {
+        return;
+    }
+    PERF.with(|p| {
+        let mut p = p.borrow_mut();
+        let now = Instant::now();
+        let dt = now.duration_since(p.1).as_secs_f64() * 1000.0;
+        p.1 = now;
+        p.2 += 1;
+        p.3 += paint_ms;
+        p.4 = p.4.max(paint_ms);
+        p.5 = p.5.max(dt);
+        if now.duration_since(p.0).as_secs_f64() >= 1.0 {
+            let secs = now.duration_since(p.0).as_secs_f64();
+            println!("PERF fps={:.1} paint avg={:.2}ms max={:.2}ms maxgap={:.1}ms glyphs/frame={} raf={}", p.2 as f64 / secs, p.3 / p.2 as f64, p.4, p.5, sh.tc.glyph_draws.get() / p.2 as u64, sh.en.raf);
+            sh.tc.glyph_draws.set(0);
+            *p = (now, now, 0, 0.0, 0.0, 0.0);
+        }
+    });
 }
 
 fn with_alpha(c: Hsla, a: f64) -> Hsla {
@@ -557,6 +602,7 @@ fn main() {
                     focus_visible: false,
                     down_target: None,
                     size: (sz.0 as f64, sz.1 as f64),
+                    bench_n: 0,
                 }));
                 let focus = cx.focus_handle();
                 window.focus(&focus);
