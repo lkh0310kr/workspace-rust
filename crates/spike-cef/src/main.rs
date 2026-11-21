@@ -8,6 +8,7 @@ mod cefhost;
 mod headless;
 mod ipc_browser;
 mod keys;
+#[cfg(target_os = "macos")]
 mod macapp;
 #[cfg(target_os = "macos")]
 mod native;
@@ -849,8 +850,11 @@ fn main() {
         return;
     }
 
-    let patched = unsafe { macapp::patch_application(b"GPUIApplication\0") };
-    println!("macapp: {patched}");
+    #[cfg(target_os = "macos")]
+    {
+        let patched = unsafe { macapp::patch_application(b"GPUIApplication\0") };
+        println!("macapp: {patched}");
+    }
 
     let autotest = std::env::var("SPIKE_AUTOTEST").is_ok();
     let reports = testsite::spawn(PORT);
