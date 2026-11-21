@@ -14,7 +14,11 @@ pub fn payload(n: usize) -> Vec<u8> {
 }
 
 fn parse_n(url: &str) -> usize {
-    url.split("n=").nth(1).and_then(|s| s.split('&').next()).and_then(|s| s.parse().ok()).unwrap_or(0)
+    url.split("n=")
+        .nth(1)
+        .and_then(|s| s.split('&').next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 wrap_resource_handler! {
@@ -72,7 +76,11 @@ wrap_scheme_handler_factory! {
 
 pub fn register_factory() -> i32 {
     let mut f = SchemeFactory::new();
-    register_scheme_handler_factory(Some(&CefString::from(SCHEME)), Some(&CefString::from(HOST)), Some(&mut f))
+    register_scheme_handler_factory(
+        Some(&CefString::from(SCHEME)),
+        Some(&CefString::from(HOST)),
+        Some(&mut f),
+    )
 }
 
 /// 렌더러가 보낸 `ws_invoke`("<id>|<n>") 에 `ws_reply`(id, payload) 로 응답
@@ -81,13 +89,23 @@ pub fn handle_process_message(frame: &Frame, msg: &ProcessMessage) -> bool {
     if name != "ws_invoke" {
         return false;
     }
-    let Some(args) = msg.argument_list() else { return true };
+    let Some(args) = msg.argument_list() else {
+        return true;
+    };
     let a0 = CefString::from(&args.string(0)).to_string();
-    let (id, n) = a0.split_once('|').map(|(i, n)| (i.to_string(), n.parse::<usize>().unwrap_or(0))).unwrap_or_default();
+    let (id, n) = a0
+        .split_once('|')
+        .map(|(i, n)| (i.to_string(), n.parse::<usize>().unwrap_or(0)))
+        .unwrap_or_default();
     if let Some(mut reply) = process_message_create(Some(&CefString::from("ws_reply"))) {
         if let Some(rargs) = reply.argument_list() {
             rargs.set_string(0, Some(&CefString::from(id.as_str())));
-            rargs.set_string(1, Some(&CefString::from(String::from_utf8(payload(n)).unwrap().as_str())));
+            rargs.set_string(
+                1,
+                Some(&CefString::from(
+                    String::from_utf8(payload(n)).unwrap().as_str(),
+                )),
+            );
         }
         frame.send_process_message(ProcessId::RENDERER, Some(&mut reply));
     }
