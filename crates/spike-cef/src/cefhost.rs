@@ -1,6 +1,7 @@
 //! CEF(Chromium) off-screen rendering 호스트.
 //! 모든 콜백은 메인(UI) 스레드에서 불린다(external_message_pump + do_message_loop_work) → thread_local 로 상태 공유.
 
+use cef::sys::HICON__;
 use cef::{rc::Rc, *};
 use std::cell::RefCell;
 use std::time::Instant;
@@ -54,7 +55,7 @@ pub struct St {
     pub loading: (bool, bool, bool), // (is_loading, can_go_back, can_go_forward)
     pub load_events: u64,
     pub load_errors: Vec<String>,
-    pub find: (i32, i32, bool),      // (count, active_ordinal, final)
+    pub find: (i32, i32, bool), // (count, active_ordinal, final)
     pub dialogs: Vec<String>,
     pub favicons: Vec<String>,
     pub address: String,
@@ -122,7 +123,8 @@ thread_local! {
 }
 
 /// 일부 콜백(HTTP 인증 등)은 UI 가 아닌 IO 스레드에서 불린다 → thread_local 대신 프로세스 전역으로 공유
-pub static AUTH_CREDENTIALS: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+pub static AUTH_CREDENTIALS: std::sync::Mutex<Option<(String, String)>> =
+    std::sync::Mutex::new(None);
 pub static AUTH_REQUESTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 pub fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
@@ -342,7 +344,7 @@ wrap_display_handler! {
         fn on_cursor_change(
             &self,
             _b: Option<&mut Browser>,
-            _cursor: *mut u8,
+            _cursor: *mut HICON__,
             type_: CursorType,
             _info: Option<&CursorInfo>,
         ) -> ::std::os::raw::c_int {
@@ -677,7 +679,12 @@ pub fn create_main_browser(url: &str) {
         Ok("chrome") => RuntimeStyle::CHROME,
         _ => RuntimeStyle::DEFAULT,
     };
-    with(|s| s.log.push(format!("runtime_style={:?}", std::env::var("SPIKE_RUNTIME"))));
+    with(|s| {
+        s.log.push(format!(
+            "runtime_style={:?}",
+            std::env::var("SPIKE_RUNTIME")
+        ))
+    });
     let wi = WindowInfo {
         windowless_rendering_enabled: 1,
         runtime_style: style,
@@ -721,7 +728,9 @@ pub fn apply_prefs_off() -> Vec<String> {
             out.push(format!("{name}: not registered"));
             continue;
         }
-        let Some(mut v) = value_create() else { continue };
+        let Some(mut v) = value_create() else {
+            continue;
+        };
         v.set_bool(0);
         let mut err = CefString::default();
         let ok = ctx.set_preference(Some(&n), Some(&mut v), Some(&mut err));
@@ -732,10 +741,24 @@ pub fn apply_prefs_off() -> Vec<String> {
 
 /// 탭(추가 브라우저) 생성. ctx 를 주면 별도 프로필(캐시 경로)로 격리된다.
 pub fn create_tab(url: &str, ctx: Option<&mut RequestContext>) -> i32 {
-    let wi = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
+    let wi = WindowInfo {
+        windowless_rendering_enabled: 1,
+        ..Default::default()
+    };
     let mut client = make_client(Which::Tab);
-    let bs = BrowserSettings { windowless_frame_rate: 30, background_color: 0xFFFF_FFFF, ..Default::default() };
-    browser_host_create_browser(Some(&wi), Some(&mut client), Some(&CefString::from(url)), Some(&bs), None, ctx)
+    let bs = BrowserSettings {
+        windowless_frame_rate: 30,
+        background_color: 0xFFFF_FFFF,
+        ..Default::default()
+    };
+    browser_host_create_browser(
+        Some(&wi),
+        Some(&mut client),
+        Some(&CefString::from(url)),
+        Some(&bs),
+        None,
+        ctx,
+    )
 }
 
 /// 별도 프로필 컨텍스트 생성. cache_path 가 비어 있으면 메모리 전용(시크릿).
