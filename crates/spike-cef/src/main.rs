@@ -3,6 +3,7 @@
 
 #[cfg(target_os = "macos")]
 mod autotest;
+mod browser;
 mod cefhost;
 #[cfg(target_os = "macos")]
 mod headless;
@@ -12,9 +13,9 @@ mod keys;
 mod macapp;
 #[cfg(target_os = "macos")]
 mod native;
-mod root_view;
 #[cfg(target_os = "macos")]
 mod suite;
+mod ui;
 
 use cef::{
     api_hash, args::Args, cookie_manager_get_global_manager, do_message_loop_work, execute_process,
@@ -26,7 +27,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use crate::root_view::{url, Root, Sh, Shared, ToggleOverlay, PORT};
+use crate::ui::{url, Root, Sh, Shared, ToggleOverlay, PORT};
 
 /// gpui keystroke → Windows virtual key code (특수키만; 일반 문자는 IME/commit 경로)
 fn vkey(k: &str) -> Option<i32> {

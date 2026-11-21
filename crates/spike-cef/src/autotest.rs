@@ -1,13 +1,13 @@
 //! 자동 검증 시나리오. 사람이 눈으로 보지 않고 (1) 스크린샷 픽셀 (2) 페이지가 보고한 값으로 판정한다.
 
-use cef::*;
 use crate::cefhost::{with, Which};
-use crate::{native, popup_rect, url, Root, Sh, FRAME_PAD, OVERLAY, TOOLBAR_H, RADIUS};
+use crate::{native, popup_rect, url, Root, Sh, FRAME_PAD, OVERLAY, RADIUS, TOOLBAR_H};
+use cef::*;
 use gpui::{App, AsyncApp, Entity};
 use image::RgbaImage;
+use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::msg_send;
 use objc2_foundation::{NSRange, NSString};
 use std::time::Duration;
 use testsite::Reports;
@@ -18,9 +18,12 @@ impl Results {
     fn add(&mut self, id: &str, pass: Option<bool>, detail: impl Into<String>) {
         // 화면 픽셀 기반 항목: 백그라운드(투명) 모드에서는 합성 결과를 캡처할 수 없으므로 SKIP 으로 명시
         const PIXEL: [&str; 6] = ["Z0.", "Z1.", "Z4.", "Z5.", "U3b.", "L7."];
-        if (crate::native::background() || !crate::colorful()) && PIXEL.iter().any(|p| id.starts_with(p)) {
+        if (crate::native::background() || !crate::colorful())
+            && PIXEL.iter().any(|p| id.starts_with(p))
+        {
             println!("RESULT {id} SKIP pixel check needs distinct colors (run with SPIKE_COLORFUL=1 / verify.sh --colorful)");
-            self.0.push((id.to_string(), "SKIP", "requires visible window".into()));
+            self.0
+                .push((id.to_string(), "SKIP", "requires visible window".into()));
             return;
         }
         let st = match pass {
@@ -35,17 +38,25 @@ impl Results {
 }
 
 async fn sleep(cx: &AsyncApp, ms: u64) {
-    cx.background_executor().timer(Duration::from_millis(ms)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(ms))
+        .await;
 }
 
 fn shot(w: &objc2_app_kit::NSWindow, name: &str) -> (RgbaImage, native::Geom) {
     use core_graphics::geometry::{CGPoint, CGRect, CGSize};
-    use core_graphics::window::{create_image, kCGWindowImageBestResolution, kCGWindowImageBoundsIgnoreFraming, kCGWindowListOptionIncludingWindow};
+    use core_graphics::window::{
+        create_image, kCGWindowImageBestResolution, kCGWindowImageBoundsIgnoreFraming,
+        kCGWindowListOptionIncludingWindow,
+    };
     native::activate(w); // 가려진 창은 macOS 가 디스플레이 링크를 멈춘다 → 캡처 전 전면화
     std::thread::sleep(Duration::from_millis(250));
     let g = native::geom(w);
     // CGRectNull = (inf, inf, 0, 0) → 창 전체
-    let null = CGRect::new(&CGPoint::new(f64::INFINITY, f64::INFINITY), &CGSize::new(0.0, 0.0));
+    let null = CGRect::new(
+        &CGPoint::new(f64::INFINITY, f64::INFINITY),
+        &CGSize::new(0.0, 0.0),
+    );
     let img = match create_image(
         null,
         kCGWindowListOptionIncludingWindow,
@@ -60,13 +71,20 @@ fn shot(w: &objc2_app_kit::NSWindow, name: &str) -> (RgbaImage, native::Geom) {
             for y in 0..ht as usize {
                 for x in 0..wd as usize {
                     let i = y * bpr + x * 4; // BGRA
-                    out.put_pixel(x as u32, y as u32, image::Rgba([bytes[i + 2], bytes[i + 1], bytes[i], 255]));
+                    out.put_pixel(
+                        x as u32,
+                        y as u32,
+                        image::Rgba([bytes[i + 2], bytes[i + 1], bytes[i], 255]),
+                    );
                 }
             }
             if native::background() {
                 // 창 알파(STEALTH_ALPHA)가 곱해져 캡처되므로 보정
                 for p in out.pixels_mut() {
-                    for c in 0..3 { p.0[c] = ((p.0[c] as f64 / native::stealth_alpha()).round().min(255.0)) as u8; }
+                    for c in 0..3 {
+                        p.0[c] =
+                            ((p.0[c] as f64 / native::stealth_alpha()).round().min(255.0)) as u8;
+                    }
                 }
             }
             let _ = std::fs::create_dir_all("target/shots");
@@ -112,23 +130,36 @@ fn ime_set_marked(r: &AnyObject, s: &str) {
     let ns = NSString::from_str(s);
     let sel = NSRange::new(s.chars().count(), 0);
     let rep = NSRange::new(isize::MAX as usize, 0);
-    unsafe { let _: () = msg_send![r, setMarkedText: &*ns, selectedRange: sel, replacementRange: rep]; }
+    unsafe {
+        let _: () = msg_send![r, setMarkedText: &*ns, selectedRange: sel, replacementRange: rep];
+    }
 }
 fn ime_insert(r: &AnyObject, s: &str) {
     let ns = NSString::from_str(s);
     let rep = NSRange::new(isize::MAX as usize, 0);
-    unsafe { let _: () = msg_send![r, insertText: &*ns, replacementRange: rep]; }
+    unsafe {
+        let _: () = msg_send![r, insertText: &*ns, replacementRange: rep];
+    }
 }
 
 fn report(reports: &Reports, k: &str) -> Option<String> {
     reports.lock().unwrap().get(k).cloned()
 }
 
-
 fn exec(which: Which, js: &str) {
-    let b = with(|s| if which == Which::Main { s.main.clone() } else { s.popup.clone() });
+    let b = with(|s| {
+        if which == Which::Main {
+            s.main.clone()
+        } else {
+            s.popup.clone()
+        }
+    });
     if let Some(f) = b.and_then(|b| b.main_frame()) {
-        f.execute_java_script(Some(&cef::CefString::from(js)), Some(&cef::CefString::from("spike://eval")), 0);
+        f.execute_java_script(
+            Some(&cef::CefString::from(js)),
+            Some(&cef::CefString::from("spike://eval")),
+            0,
+        );
     }
 }
 
@@ -138,15 +169,27 @@ async fn goto(cx: &AsyncApp, u: &str, wait: u64) {
         f.load_url(Some(&cef::CefString::from(u)));
     }
     // OSR 은 변화가 있을 때만 프레임을 준다 → 새 프레임이 올 때까지 대기(최대 6s) 후 추가 안정화 대기
-    for _ in 0..60 { sleep(cx, 100).await; if with(|s| s.surf[0].gen) > g0 { break; } }
+    for _ in 0..60 {
+        sleep(cx, 100).await;
+        if with(|s| s.surf[0].gen) > g0 {
+            break;
+        }
+    }
     sleep(cx, wait).await;
 }
 
 /// 조건이 만족될 때까지 캡처를 반복(최대 ~6s). 마지막 캡처를 돌려준다.
-async fn shot_until(cx: &AsyncApp, w: &objc2_app_kit::NSWindow, name: &str, ok: impl Fn(&RgbaImage, &native::Geom) -> bool) -> (RgbaImage, native::Geom) {
+async fn shot_until(
+    cx: &AsyncApp,
+    w: &objc2_app_kit::NSWindow,
+    name: &str,
+    ok: impl Fn(&RgbaImage, &native::Geom) -> bool,
+) -> (RgbaImage, native::Geom) {
     let mut last = shot(w, name);
     for _ in 0..20 {
-        if ok(&last.0, &last.1) { break; }
+        if ok(&last.0, &last.1) {
+            break;
+        }
         sleep(cx, 300).await;
         last = shot(w, name);
     }
@@ -154,26 +197,48 @@ async fn shot_until(cx: &AsyncApp, w: &objc2_app_kit::NSWindow, name: &str, ok: 
 }
 
 /// 요소 중앙 좌표를 페이지가 보고하게 해서 가져온 뒤, 합성 클릭을 gpui 창에 주입 (실제 gpui hit-test 경로)
-async fn click_sel(cx: &AsyncApp, sh: &Sh, reports: &Reports, w: &objc2_app_kit::NSWindow, which: Which, sel: &str) -> bool {
+async fn click_sel(
+    cx: &AsyncApp,
+    sh: &Sh,
+    reports: &Reports,
+    w: &objc2_app_kit::NSWindow,
+    which: Which,
+    sel: &str,
+) -> bool {
     reports.lock().unwrap().remove("q_rect");
     exec(which, &format!("(()=>{{const e=document.querySelector({sel:?});if(!e){{__report('q_rect','null');return}}const r=e.getBoundingClientRect();__report('q_rect',JSON.stringify([r.x+r.width/2,r.y+r.height/2]))}})()"));
     let mut got = None;
     for _ in 0..30 {
         sleep(cx, 100).await;
-        if let Some(v) = reports.lock().unwrap().get("q_rect").cloned() { got = Some(v); break; }
+        if let Some(v) = reports.lock().unwrap().get("q_rect").cloned() {
+            got = Some(v);
+            break;
+        }
     }
     let Some(s) = got else { return false };
     let xy: Vec<f64> = serde_json::from_str(&s).unwrap_or_default();
-    if xy.len() != 2 { return false; }
+    if xy.len() != 2 {
+        return false;
+    }
     let b = sh.borrow().bounds.unwrap();
-    let origin = if which == Which::Main { b.origin } else { popup_rect(b).origin };
-    native::click(w, f32::from(origin.x) as f64 + xy[0], f32::from(origin.y) as f64 + xy[1]);
+    let origin = if which == Which::Main {
+        b.origin
+    } else {
+        popup_rect(b).origin
+    };
+    native::click(
+        w,
+        f32::from(origin.x) as f64 + xy[0],
+        f32::from(origin.y) as f64 + xy[1],
+    );
     true
 }
 
 /// 종료 직전 쿠키 DB flush. (Electron 은 내부적으로 처리하지만 CEF 임베딩에서는 앱이 책임진다)
 async fn flush_cookies(cx: &AsyncApp) {
-    if std::env::var("SPIKE_NO_FLUSH").is_ok() { return; }
+    if std::env::var("SPIKE_NO_FLUSH").is_ok() {
+        return;
+    }
     if let Some(m) = cef::cookie_manager_get_global_manager(None) {
         let r = m.flush_store(None);
         println!("cookie flush_store -> {r}");
@@ -184,10 +249,15 @@ async fn flush_cookies(cx: &AsyncApp) {
 /// #i 의 현재 value 를 페이지가 보고하게 해서 읽는다
 async fn eval_value(cx: &AsyncApp, reports: &Reports) -> String {
     reports.lock().unwrap().remove("q_val");
-    exec(Which::Main, "__report('q_val',document.getElementById('i').value)");
+    exec(
+        Which::Main,
+        "__report('q_val',document.getElementById('i').value)",
+    );
     for _ in 0..30 {
         sleep(cx, 100).await;
-        if let Some(v) = reports.lock().unwrap().get("q_val").cloned() { return v; }
+        if let Some(v) = reports.lock().unwrap().get("q_val").cloned() {
+            return v;
+        }
     }
     "TIMEOUT".into()
 }
@@ -682,7 +752,10 @@ fn finish(cx: &AsyncApp, res: &Results, phase: &str) {
         .collect();
     let dir = std::path::Path::new("target/results");
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join(format!("cef-phase{phase}.json")), serde_json::to_string_pretty(&j).unwrap());
+    let _ = std::fs::write(
+        dir.join(format!("cef-phase{phase}.json")),
+        serde_json::to_string_pretty(&j).unwrap(),
+    );
     println!("DONE phase {phase}");
     cx.update(|cx| cx.quit()).ok();
 }
