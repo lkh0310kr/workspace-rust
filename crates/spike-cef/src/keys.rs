@@ -80,10 +80,10 @@ pub fn send_key(h: &BrowserHost, vk: i32, mods: u32) {
     if mods & CMD != 0 {
         let rest = mods & !CMD;
         match vk {
-            37 => return send_key(h, 36, rest),           // Cmd+← → Home
-            39 => return send_key(h, 35, rest),           // Cmd+→ → End
-            38 => return send_key(h, 36, rest | CTRL),    // Cmd+↑ → Ctrl+Home (문서 처음)
-            40 => return send_key(h, 35, rest | CTRL),    // Cmd+↓ → Ctrl+End
+            37 => return send_key(h, 36, rest),        // Cmd+← → Home
+            39 => return send_key(h, 35, rest),        // Cmd+→ → End
+            38 => return send_key(h, 36, rest | CTRL), // Cmd+↑ → Ctrl+Home (문서 처음)
+            40 => return send_key(h, 35, rest | CTRL), // Cmd+↓ → Ctrl+End
             8 => {
                 // Cmd+Backspace → 줄 처음까지 선택 후 삭제
                 send_key(h, 36, rest | SHIFT);

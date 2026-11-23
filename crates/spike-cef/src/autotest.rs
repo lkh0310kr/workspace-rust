@@ -1,6 +1,6 @@
 //! 자동 검증 시나리오. 사람이 눈으로 보지 않고 (1) 스크린샷 픽셀 (2) 페이지가 보고한 값으로 판정한다.
 
-use crate::cefhost::{with, Which};
+use crate::cef_adapter::host::{with, Which};
 use crate::{native, popup_rect, url, Root, Sh, FRAME_PAD, OVERLAY, RADIUS, TOOLBAR_H};
 use cef::*;
 use gpui::{App, AsyncApp, Entity};

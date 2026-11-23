@@ -1,7 +1,8 @@
 //! 헤드리스 검증 스위트 (창/포커스/사용자 입력과 무관). `SPIKE_SUITE=input|browser|all SPIKE_HEADLESS=1`.
 //! 입력은 BrowserHost API 로 직접 보내고, 결과는 페이지 JS(document.title 경유)와 CEF 핸들러 상태로 판정한다.
 
-use crate::cefhost::{self, with};
+use crate::cef_adapter::host as cefhost;
+use crate::cef_adapter::host::with;
 use crate::headless::{click, exec, host, pump, rect_of, step, title_query};
 use cef::*;
 use std::time::{Duration, Instant};
@@ -61,11 +62,11 @@ fn report_get(reports: &testsite::Reports, k: &str) -> Option<String> {
     reports.lock().unwrap().get(k).cloned()
 }
 
-use crate::keys::{native_of, ALT, CMD, SHIFT};
+use crate::cef_adapter::keys::{native_of, ALT, CMD, SHIFT};
 
 fn key(vk: i32, mods: u32) {
     if let Some(h) = host() {
-        crate::keys::send_key(&h, vk, mods);
+        crate::cef_adapter::keys::send_key(&h, vk, mods);
     }
     pump(70);
 }
@@ -914,7 +915,7 @@ pub fn run(which: &str) {
             break;
         }
     }
-    let _ = crate::ipc_browser::register_factory();
+    let _ = crate::cef_adapter::ipc_browser::register_factory();
     pump(500);
     let mut rs = Rs(vec![]);
     if which == "rte" {

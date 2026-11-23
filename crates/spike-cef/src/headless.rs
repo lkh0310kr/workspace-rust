@@ -3,7 +3,8 @@
 //! 입력은 CEF BrowserHost API 로 직접 보내고, 화면은 OnPaint 버퍼를 PNG 로 저장해 확인한다.
 //! 사용자 키보드/마우스/포커스와 완전히 독립적이다.
 
-use crate::cefhost::{self, with};
+use crate::cef_adapter::host as cefhost;
+use crate::cef_adapter::host::with;
 use cef::{args::Args, *};
 use std::time::{Duration, Instant};
 
@@ -86,7 +87,7 @@ pub(crate) fn rect_of(selectors: &[&str]) -> Option<(f64, f64)> {
 /// IPC 방식 비교 측정(창 없음): http / 커스텀 스킴 / 프로세스 메시지 / Rust→페이지 푸시 / 오리진 게이팅
 fn ipc_bench() {
     let reports = testsite::spawn(18080);
-    let f = crate::ipc_browser::register_factory();
+    let f = crate::cef_adapter::ipc_browser::register_factory();
     println!("scheme factory registered -> {f}");
     let load = |u: &str| {
         reports.lock().unwrap().remove("ipcbench");

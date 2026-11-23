@@ -9,7 +9,7 @@ use gpui::{
     ScrollWheelEvent, Styled, UTF16Selection, Window,
 };
 
-use crate::browser::{navigate, BrowserTarget};
+use crate::application::{Application, BrowserCommand, BrowserTarget, CursorIcon, SurfaceTarget};
 
 gpui::actions!(spike, [ToggleOverlay]);
 
@@ -50,6 +50,7 @@ pub type Sh = Rc<RefCell<Shared>>;
 
 pub struct Root {
     pub sh: Sh,
+    pub app: Rc<Application>,
     pub sidebar_w: f32,
     pub overlay: bool,
     pub overlay_clicks: u32,
@@ -63,21 +64,11 @@ impl Root {
     /// 창 좌표 → (대상 브라우저, 대상 로컬 좌표)
     fn route(&self, pos: gpui::Point<Pixels>) -> Option<(BrowserTarget, i32, i32)> {
         let b = self.sh.borrow().bounds?;
-        let has_popup = crate::browser::has_popup();
-        if has_popup {
-            let pr = popup_rect(b);
-            if pr.contains(&pos) {
-                return Some((
-                    BrowserTarget::Popup,
-                    f32::from(pos.x - pr.origin.x) as i32,
-                    f32::from(pos.y - pr.origin.y) as i32,
-                ));
-            }
-        }
-        Some((
-            BrowserTarget::Main,
-            f32::from(pos.x - b.origin.x) as i32,
-            f32::from(pos.y - b.origin.y) as i32,
+        Some(self.app.route_pointer(
+            f32::from(pos.x - b.origin.x),
+            f32::from(pos.y - b.origin.y),
+            f32::from(b.size.width),
+            f32::from(b.size.height),
         ))
     }
     fn mouse_button(
@@ -92,7 +83,8 @@ impl Root {
             return;
         };
 
-        crate::browser::mouse_button(w, x, y, mods(m, !up && !right), up, right, click_count);
+        self.app
+            .mouse_button(w, x, y, mods(m, !up && !right), up, right, click_count);
     }
 }
 
@@ -126,7 +118,7 @@ impl EntityInputHandler for Root {
     }
     fn unmark_text(&mut self, _w: &mut Window, _cx: &mut Context<Self>) {
         self.marked = None;
-        crate::browser::ime_finish();
+        self.app.ime_finish();
     }
     fn replace_text_in_range(
         &mut self,
@@ -136,7 +128,7 @@ impl EntityInputHandler for Root {
         _cx: &mut Context<Self>,
     ) {
         self.marked = None;
-        crate::browser::ime_commit(text);
+        self.app.ime_commit(text);
     }
     fn replace_and_mark_text_in_range(
         &mut self,
@@ -148,10 +140,11 @@ impl EntityInputHandler for Root {
     ) {
         let n = text.encode_utf16().count();
 
-        crate::browser::record_foreign_ime();
+        self.app.record_foreign_ime();
         self.marked = Some(0..n);
 
-        crate::browser::ime_set_composition(text, sel.map(|s| (s.start, s.end)));
+        self.app
+            .ime_set_composition(text, sel.map(|s| (s.start, s.end)));
     }
     fn bounds_for_range(
         &mut self,
@@ -178,6 +171,7 @@ impl EntityInputHandler for Root {
 impl Render for Root {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sh = self.sh.clone();
+        let ui = self.app.ui_state();
         let btn = |label: &'static str| {
             div()
                 .px_3()
@@ -187,7 +181,9 @@ impl Render for Root {
                 .text_color(rgb(0xffffff))
                 .child(label)
         };
+        let app = self.app.clone();
         let nav = |path: &'static str| {
+            let app = app.clone();
             move |_: &MouseDownEvent, _: &mut Window, _: &mut App| {
                 let url = if path.starts_with("http") {
                     path.to_string()
@@ -195,7 +191,7 @@ impl Render for Root {
                     url(path)
                 };
 
-                navigate(&url);
+                app.navigate(&url);
             }
         };
         let (dx, oy, ow, oh) = OVERLAY;
@@ -278,18 +274,18 @@ impl Render for Root {
                             .child(
                                 div()
                                     .size_full()
-                                    .cursor(match crate::browser::cursor() {
-                                        1 => gpui::CursorStyle::PointingHand,
-                                        2 => gpui::CursorStyle::IBeam,
-                                        3 => gpui::CursorStyle::Crosshair,
-                                        _ => gpui::CursorStyle::Arrow,
+                                    .cursor(match ui.cursor {
+                                        CursorIcon::Hand => gpui::CursorStyle::PointingHand,
+                                        CursorIcon::Text => gpui::CursorStyle::IBeam,
+                                        CursorIcon::Crosshair => gpui::CursorStyle::Crosshair,
+                                        CursorIcon::Arrow => gpui::CursorStyle::Arrow,
                                     })
                                     .track_focus(&self.focus)
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|t, e: &MouseDownEvent, w, _| {
                                             w.focus(&t.focus);
-                                            crate::browser::dismiss_context_menu();
+                                            t.app.dismiss_context_menu();
                                             t.mouse_button(
                                                 e.position,
                                                 &e.modifiers,
@@ -326,7 +322,7 @@ impl Render for Root {
                                     )
                                     .on_mouse_move(cx.listener(|t, e: &MouseMoveEvent, _, _| {
                                         if let Some((w, x, y)) = t.route(e.position) {
-                                            crate::browser::mouse_move(
+                                            t.app.mouse_move(
                                                 w,
                                                 x,
                                                 y,
@@ -347,7 +343,7 @@ impl Render for Root {
                                                     }
                                                 };
 
-                                                crate::browser::mouse_wheel(
+                                                t.app.mouse_wheel(
                                                     w,
                                                     x,
                                                     y,
@@ -361,7 +357,7 @@ impl Render for Root {
                                     .on_key_down(cx.listener(|t, e: &KeyDownEvent, _, _| {
                                         let k = &e.keystroke;
 
-                                        crate::browser::key_down(
+                                        t.app.key_down(
                                             &k.key,
                                             k.modifiers.platform,
                                             k.modifiers.shift,
@@ -374,6 +370,7 @@ impl Render for Root {
                                         canvas(
                                             {
                                                 let sh = sh.clone();
+                                                let app = self.app.clone();
                                                 move |bounds, window, _cx| {
                                                     sh.borrow_mut().bounds = Some(bounds);
                                                     let sz = (
@@ -388,15 +385,14 @@ impl Render for Root {
                                                         c
                                                     };
                                                     if changed {
-                                                        crate::browser::resize_main(
-                                                            sz.0, sz.1, scale,
-                                                        );
+                                                        app.resize_main(sz.0, sz.1, scale);
                                                     }
                                                     bounds
                                                 }
                                             },
                                             {
                                                 let sh = sh.clone();
+                                                let app = self.app.clone();
                                                 move |_, bounds, window, cx| {
                                                     window.handle_input(
                                                         &focus,
@@ -410,7 +406,7 @@ impl Render for Root {
                                                         return;
                                                     }
                                                     let t = std::time::Instant::now();
-                                                    let wr = crate::browser::widget_bounds();
+                                                    let wr = ui.widget_bounds;
                                                     let widget_b = Bounds {
                                                         origin: point(
                                                             bounds.origin.x + px(wr.0 as f32),
@@ -421,27 +417,39 @@ impl Render for Root {
                                                             px(wr.3 as f32),
                                                         ),
                                                     };
-                                                    for (i, b) in [
-                                                        (0usize, bounds),
-                                                        (1usize, popup_rect(bounds)),
-                                                        (2usize, widget_b),
+                                                    let popup_b = app
+                                                        .popup_bounds(
+                                                            f32::from(bounds.size.width),
+                                                            f32::from(bounds.size.height),
+                                                        )
+                                                        .map(|popup| Bounds {
+                                                            origin: point(
+                                                                bounds.origin.x + px(popup.x),
+                                                                bounds.origin.y + px(popup.y),
+                                                            ),
+                                                            size: size(
+                                                                px(popup.width),
+                                                                px(popup.height),
+                                                            ),
+                                                        });
+                                                    for (i, target, maybe_bounds) in [
+                                                        (0usize, SurfaceTarget::Main, Some(bounds)),
+                                                        (1usize, SurfaceTarget::Popup, popup_b),
+                                                        (
+                                                            2usize,
+                                                            SurfaceTarget::Widget,
+                                                            ui.widget_visible.then_some(widget_b),
+                                                        ),
                                                     ] {
-                                                        if i == 1 && !crate::browser::has_popup() {
+                                                        let Some(b) = maybe_bounds else {
                                                             continue;
-                                                        }
-                                                        if i == 2
-                                                            && !crate::browser::widget_visible()
-                                                        {
-                                                            continue;
-                                                        }
+                                                        };
                                                         let known_gen = sh.borrow().img[i]
                                                             .as_ref()
                                                             .map(|x| x.0);
 
                                                         let Some(snapshot) =
-                                                            crate::browser::surface_snapshot(
-                                                                i, known_gen,
-                                                            )
+                                                            app.surface_snapshot(target, known_gen)
                                                         else {
                                                             continue;
                                                         };
@@ -520,7 +528,7 @@ impl Render for Root {
                         .child("gpui overlay (dropdown/modal)"),
                 )
             })
-            .when_some(crate::browser::context_menu(), |d, (x, y, link)| {
+            .when_some(ui.context_menu, |d, (x, y, link)| {
                 let o = self
                     .sh
                     .borrow()
@@ -551,21 +559,21 @@ impl Render for Root {
                                 })
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    cx.listener(move |_, _, _, cx| {
+                                    cx.listener(move |t, _, _, cx| {
                                         let command = match label {
-                                            "Copy" => Some(crate::browser::BrowserCommand::Copy),
-                                            "Paste" => Some(crate::browser::BrowserCommand::Paste),
+                                            "Copy" => Some(BrowserCommand::Copy),
+                                            "Paste" => Some(BrowserCommand::Paste),
                                             "Select all" => {
-                                                Some(crate::browser::BrowserCommand::SelectAll)
+                                                Some(BrowserCommand::SelectAll)
                                             }
                                             "Reload" => {
-                                                Some(crate::browser::BrowserCommand::Reload)
+                                                Some(BrowserCommand::Reload)
                                             }
                                             _ => None,
                                         };
 
                                         if let Some(command) = command {
-                                            crate::browser::execute_context_command(command, label);
+                                            t.app.execute_context_command(command, label);
                                         }
                                         cx.notify();
                                     }),
@@ -573,23 +581,5 @@ impl Render for Root {
                         })),
                 )
             })
-    }
-}
-
-/// 팝업(별도 Browser)이 그려지는 gpui 논리 사각형: 캔버스 중앙
-fn popup_rect(canvas: Bounds<Pixels>) -> Bounds<Pixels> {
-    let (w, h) = crate::browser::popup_size();
-
-    let (w, h) = (
-        w.min(f32::from(canvas.size.width) - 40.0),
-        h.min(f32::from(canvas.size.height) - 40.0),
-    );
-
-    Bounds {
-        origin: point(
-            canvas.origin.x + (canvas.size.width - px(w)) / 2.0,
-            canvas.origin.y + (canvas.size.height - px(h)) / 2.0,
-        ),
-        size: size(px(w), px(h)),
     }
 }

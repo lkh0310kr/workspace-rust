@@ -4,8 +4,9 @@
 //! 성능: 텍스트 레이아웃/글리프 위치는 (텍스트, 크기, 두께, 자간) 키로 캐시한다(프레임마다 재계산하지 않음).
 
 use gpui::{
-    black, point, px, quad, size, App, BorderStyle, Bounds, Corners, Edges, Font, FontFeatures, FontId, FontStyle, FontWeight, GlyphId,
-    Hsla, SharedString, TextRun, TextSystem, Window, WindowTextSystem, transparent_black,
+    black, point, px, quad, size, transparent_black, App, BorderStyle, Bounds, Corners, Edges,
+    Font, FontFeatures, FontId, FontStyle, FontWeight, GlyphId, Hsla, SharedString, TextRun,
+    TextSystem, Window, WindowTextSystem,
 };
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -61,21 +62,33 @@ fn is_cjk(c: char) -> bool {
 }
 
 impl TextCtx {
-    pub fn new(ts: Arc<WindowTextSystem>) -> TextCtx {
-        let halo_samples = match std::env::var("RTE_HALO").as_deref() {
-            Ok("full") => (16, 8),
-            Ok("fast") => (8, 0),
-            _ => (12, 4),
-        };
-        TextCtx { ts, cache: Rc::new(RefCell::new(HashMap::new())), glyph_draws: Rc::new(Cell::new(0)), halo_samples }
+    pub fn new(ts: Arc<WindowTextSystem>, halo_samples: (usize, usize)) -> TextCtx {
+        TextCtx {
+            ts,
+            cache: Rc::new(RefCell::new(HashMap::new())),
+            glyph_draws: Rc::new(Cell::new(0)),
+            halo_samples,
+        }
     }
 
     pub fn get(&self, text: &str, fs: f64, wt: f64, ls_em: f64) -> Rc<Cached> {
-        let key: Key = (text.to_string(), (fs as f32).to_bits(), (wt as f32).to_bits(), (ls_em as f32).to_bits());
+        let key: Key = (
+            text.to_string(),
+            (fs as f32).to_bits(),
+            (wt as f32).to_bits(),
+            (ls_em as f32).to_bits(),
+        );
         if let Some(c) = self.cache.borrow().get(&key) {
             return c.clone();
         }
-        let run = TextRun { len: text.len(), font: font(wt), color: black(), background_color: None, underline: None, strikethrough: None };
+        let run = TextRun {
+            len: text.len(),
+            font: font(wt),
+            color: black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
         let l = self.ts.layout_line(text, px(fs as f32), &[run], None);
         let ls = fs * ls_em;
         let n = text.chars().count() as f64;
@@ -97,7 +110,13 @@ impl TextCtx {
             }
         }
         let width = f32::from(l.width) as f64;
-        let c = Rc::new(Cached { width, total: width + ls * n, ascent: f32::from(l.ascent) as f64, descent: f32::from(l.descent) as f64, glyphs });
+        let c = Rc::new(Cached {
+            width,
+            total: width + ls * n,
+            ascent: f32::from(l.ascent) as f64,
+            descent: f32::from(l.descent) as f64,
+            glyphs,
+        });
         let mut cache = self.cache.borrow_mut();
         if cache.len() > 8000 {
             cache.clear();
@@ -122,7 +141,14 @@ impl TextCtx {
     }
 
     /// (왼쪽 x, 폭(자간 포함), ascent, descent)
-    pub fn text_box(&self, text: &str, fs: f64, wt: f64, anchor: &str, x: f64) -> (f64, f64, f64, f64) {
+    pub fn text_box(
+        &self,
+        text: &str,
+        fs: f64,
+        wt: f64,
+        anchor: &str,
+        x: f64,
+    ) -> (f64, f64, f64, f64) {
         let c = self.get(text, fs, wt, 0.01);
         let x0 = match anchor {
             "middle" => x - c.total / 2.0,
@@ -166,13 +192,18 @@ impl TextCtx {
                     break;
                 }
                 let c = chars[end];
-                let next_is_break = end + 1 < chars.len() && (c == ' ' || is_cjk(c) || is_cjk(chars[end + 1]));
+                let next_is_break =
+                    end + 1 < chars.len() && (c == ' ' || is_cjk(c) || is_cjk(chars[end + 1]));
                 if next_is_break {
                     last_break = Some(end + 1);
                 }
                 end += 1;
             }
-            let cut = if end >= chars.len() { end } else { last_break.unwrap_or(end.max(start + 1)) };
+            let cut = if end >= chars.len() {
+                end
+            } else {
+                last_break.unwrap_or(end.max(start + 1))
+            };
             let line: String = chars[start..cut].iter().collect();
             lines.push(line.trim_end().to_string());
             start = cut;
@@ -188,7 +219,21 @@ impl TextCtx {
 
     /// 글리프 단위로 그린다. `halo` 가 Some 이면 그 색의 외곽선(반지름 1.5px 원주 + 0.75px 원주 샘플)을 먼저 그린다.
     #[allow(clippy::too_many_arguments)]
-    pub fn paint(&self, window: &mut Window, _cx: &mut App, text: &str, x: f64, baseline: f64, anchor: &str, fs: f64, wt: f64, fill: Hsla, halo: Option<Hsla>, ls_em: f64, underline: bool) {
+    pub fn paint(
+        &self,
+        window: &mut Window,
+        _cx: &mut App,
+        text: &str,
+        x: f64,
+        baseline: f64,
+        anchor: &str,
+        fs: f64,
+        wt: f64,
+        fill: Hsla,
+        halo: Option<Hsla>,
+        ls_em: f64,
+        underline: bool,
+    ) {
         if text.is_empty() {
             return;
         }
@@ -202,26 +247,51 @@ impl TextCtx {
         let mut draws = 0u64;
         if let Some(h) = halo {
             let (n_out, n_in) = self.halo_samples;
-            for (ring_r, n, phase) in [(1.5f64, n_out, 0.0f64), (0.75f64, n_in, std::f64::consts::PI / 8.0)] {
+            for (ring_r, n, phase) in [
+                (1.5f64, n_out, 0.0f64),
+                (0.75f64, n_in, std::f64::consts::PI / 8.0),
+            ] {
                 for i in 0..n {
                     let a = phase + i as f64 * 2.0 * std::f64::consts::PI / n as f64;
                     let (dx, dy) = (ring_r * a.cos(), ring_r * a.sin());
                     for (gx, fid, gid) in &c.glyphs {
-                        let _ = window.paint_glyph(point(px((x0 + gx + dx) as f32), px((baseline + dy) as f32)), *fid, *gid, fsp, h);
+                        let _ = window.paint_glyph(
+                            point(px((x0 + gx + dx) as f32), px((baseline + dy) as f32)),
+                            *fid,
+                            *gid,
+                            fsp,
+                            h,
+                        );
                         draws += 1;
                     }
                 }
             }
         }
         for (gx, fid, gid) in &c.glyphs {
-            let _ = window.paint_glyph(point(px((x0 + gx) as f32), px(baseline as f32)), *fid, *gid, fsp, fill);
+            let _ = window.paint_glyph(
+                point(px((x0 + gx) as f32), px(baseline as f32)),
+                *fid,
+                *gid,
+                fsp,
+                fill,
+            );
             draws += 1;
         }
         self.glyph_draws.set(self.glyph_draws.get() + draws);
         if underline {
             let thick = (fs * 0.05).max(1.0);
-            let b = Bounds { origin: point(px(x0 as f32), px((baseline + fs * 0.12) as f32)), size: size(px(c.total as f32), px(thick as f32)) };
-            window.paint_quad(quad(b, Corners::all(px(0.0)), fill, Edges::all(px(0.0)), transparent_black(), BorderStyle::Solid));
+            let b = Bounds {
+                origin: point(px(x0 as f32), px((baseline + fs * 0.12) as f32)),
+                size: size(px(c.total as f32), px(thick as f32)),
+            };
+            window.paint_quad(quad(
+                b,
+                Corners::all(px(0.0)),
+                fill,
+                Edges::all(px(0.0)),
+                transparent_black(),
+                BorderStyle::Solid,
+            ));
         }
     }
 }

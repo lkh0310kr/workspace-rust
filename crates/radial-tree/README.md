@@ -8,6 +8,32 @@ RTE_THEME=dark RTE_SIZE=1100x800 cargo run -p radial-tree
 # 개발용 캡처(창이 잠깐 뜸): RTE_SHOT=out.png RTE_SHOT_MS=2500 RTE_GO=1 cargo run -p radial-tree
 ```
 
+## GPUI 컴포넌트로 사용
+
+필수 콘텐츠 입력은 tree JSON이다. 컴포넌트 크기는 부모 레이아웃을 따르며, 테마,
+시작 경로, 텍스트 후광 품질은 `TreeViewOptions`로 설정한다. GPUI 호스트는 텍스트
+시스템과 포커스 핸들을 전달한다.
+`RTE_*` 환경변수는 실행용 데모에만 적용된다.
+
+```rust,ignore
+use gpui::{prelude::*, App, Application, Bounds, FocusHandle, Window, WindowOptions};
+use radial_tree::{register_fonts, RadialTree, TreeViewOptions};
+
+Application::new().run(|cx: &mut App| {
+    register_fonts(cx.text_system());
+    let tree_data: serde_json::Value = load_tree_data();
+    cx.open_window(WindowOptions::default(), move |window: &mut Window, cx| {
+        let focus: FocusHandle = cx.focus_handle();
+        let tree = RadialTree::new(tree_data, window, focus.clone(), TreeViewOptions::default());
+        window.focus(&focus);
+        cx.new(|_| tree)
+    }).unwrap();
+});
+```
+
+`RadialTree`는 GPUI `Render` 컴포넌트이므로 기존 GPUI 화면에서도 엔티티로 생성해
+배치할 수 있다. 트리 JSON 구조는 `crates/rte-engine/data/data.json`을 참고한다.
+
 ## 비교 기준 이미지 (창 없이 생성)
 
 ```bash

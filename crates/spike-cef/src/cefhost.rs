@@ -599,7 +599,9 @@ wrap_client! {
             message: Option<&mut ProcessMessage>,
         ) -> ::std::os::raw::c_int {
             match (frame, message) {
-                (Some(f), Some(m)) => crate::ipc_browser::handle_process_message(f, m) as i32,
+                (Some(f), Some(m)) => {
+                    crate::cef_adapter::ipc_browser::handle_process_message(f, m) as i32
+                }
                 _ => 0,
             }
         }
@@ -659,7 +661,10 @@ wrap_app! {
             if let Some(r) = registrar {
                 use cef::sys::cef_scheme_options_t as O;
                 let opts = O::CEF_SCHEME_OPTION_STANDARD as i32 | O::CEF_SCHEME_OPTION_SECURE as i32 | O::CEF_SCHEME_OPTION_CORS_ENABLED as i32 | O::CEF_SCHEME_OPTION_FETCH_ENABLED as i32;
-                r.add_custom_scheme(Some(&CefString::from(crate::ipc_browser::SCHEME)), opts);
+                r.add_custom_scheme(
+                    Some(&CefString::from(crate::cef_adapter::ipc_browser::SCHEME)),
+                    opts,
+                );
             }
         }
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
